@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Printer, Bluetooth, Download, AlertCircle } from "lucide-react";
+import { Printer, Bluetooth, Download } from "lucide-react";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
@@ -16,7 +16,17 @@ const App = () => {
   const [serialPort, setSerialPort] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
-  const [connectionType, setConnectionType] = useState(null); // 'bluetooth' or 'serial'
+  const [connectionMode, setConnectionMode] = useState("ble"); // 'ble' or 'classic'
+  const [debugLog, setDebugLog] = useState([]);
+
+  // Add debug logging
+  const addDebugLog = (message) => {
+    console.log(message);
+    setDebugLog((prev) => [
+      ...prev,
+      `${new Date().toLocaleTimeString()}: ${message}`,
+    ]);
+  };
 
   const generateSequence = () => {
     const codes = [];
@@ -38,110 +48,157 @@ const App = () => {
     }
 
     setGeneratedCodes(codes);
+    addDebugLog(`✅ Generated ${codes.length} label codes`);
   };
 
-  // Web Bluetooth API Connection (Works on Mobile Chrome)
-  const connectViaWebBluetooth = async () => {
+  // BLE Mode Connection (Web Bluetooth API)
+  const connectBLEMode = async () => {
     try {
       if (!navigator.bluetooth) {
         alert(
-          "⚠️ Web Bluetooth API is not supported on this browser.\n\n" +
-            "Please use Chrome or Edge."
+          "⚠️ Web Bluetooth API is not supported.\n\nPlease use Chrome or Edge."
         );
         return;
       }
 
-      // Request Bluetooth device
+      addDebugLog("🔍 Requesting BLE device...");
+
       const device = await navigator.bluetooth.requestDevice({
         filters: [
-          { name: "TSC" },
           { namePrefix: "TSC" },
           { namePrefix: "PS-" },
+          { namePrefix: "Alpha" },
         ],
         optionalServices: [
-          "000018f0-0000-1000-8000-00805f9b34fb", // Nordic UART Service
-          "49535343-fe7d-4ae5-8fa9-9fafd205e455", // Microchip Serial Port Service
-          "0000fff0-0000-1000-8000-00805f9b34fb", // Common Serial Service
+          "000018f0-0000-1000-8000-00805f9b34fb", // Nordic UART
+          "49535343-fe7d-4ae5-8fa9-9fafd205e455", // Microchip
+          "0000fff0-0000-1000-8000-00805f9b34fb", // Common Serial
         ],
       });
 
-      console.log("Connecting to device:", device.name);
-      const server = await device.gatt.connect();
+      addDebugLog(`📱 Found device: ${device.name || device.id}`);
 
-      // Try different service UUIDs
+      const server = await device.gatt.connect();
+      addDebugLog("🔗 GATT server connected");
+
+      // Get all services
+      const services = await server.getPrimaryServices();
+      addDebugLog(`📡 Available services: ${services.length}`);
+
       let service;
       let characteristic;
+      let foundService = false;
 
+      // Try Nordic UART Service
       try {
-        // Try Nordic UART Service first
+        addDebugLog("🔍 Trying Nordic UART Service...");
         service = await server.getPrimaryService(
           "000018f0-0000-1000-8000-00805f9b34fb"
         );
         characteristic = await service.getCharacteristic(
           "00002af1-0000-1000-8000-00805f9b34fb"
         );
-        console.log("Connected using Nordic UART Service");
-      } catch (error1) {
-        console.log("Nordic UART Service not found:", error1.message);
+        addDebugLog("✅ Using Nordic UART Service");
+        foundService = true;
+      } catch (e) {
+        addDebugLog("❌ Nordic UART not available");
+      }
+
+      // Try Microchip Service
+      if (!foundService) {
         try {
-          // Try Microchip Serial Port Service
+          addDebugLog("🔍 Trying Microchip Service...");
           service = await server.getPrimaryService(
             "49535343-fe7d-4ae5-8fa9-9fafd205e455"
           );
           characteristic = await service.getCharacteristic(
             "49535343-8841-43f4-a8d4-ecbe34729bb3"
           );
-          console.log("Connected using Microchip Serial Port Service");
-        } catch (error2) {
-          console.log(
-            "Microchip Serial Port Service not found:",
-            error2.message
+          addDebugLog("✅ Using Microchip Service");
+          foundService = true;
+        } catch (e) {
+          addDebugLog("❌ Microchip Service not available");
+        }
+      }
+
+      // Try Common Serial Service
+      if (!foundService) {
+        try {
+          addDebugLog("🔍 Trying Common Serial Service...");
+          service = await server.getPrimaryService(
+            "0000fff0-0000-1000-8000-00805f9b34fb"
           );
+          characteristic = await service.getCharacteristic(
+            "0000fff1-0000-1000-8000-00805f9b34fb"
+          );
+          addDebugLog("✅ Using Common Serial Service");
+          foundService = true;
+        } catch (e) {
+          addDebugLog("❌ Common Serial Service not available");
+        }
+      }
+
+      // Search for any writable characteristic
+      if (!foundService) {
+        addDebugLog("🔍 Searching for any writable characteristic...");
+        for (const svc of services) {
           try {
-            // Try common serial service
-            service = await server.getPrimaryService(
-              "0000fff0-0000-1000-8000-00805f9b34fb"
-            );
-            characteristic = await service.getCharacteristic(
-              "0000fff1-0000-1000-8000-00805f9b34fb"
-            );
-            console.log("Connected using Common Serial Service");
-          } catch (error3) {
-            console.log("Common Serial Service not found:", error3.message);
-            throw new Error(
-              "Could not find compatible Bluetooth service. Your printer may not support BLE printing."
-            );
+            const chars = await svc.getCharacteristics();
+            for (const char of chars) {
+              if (
+                char.properties.write ||
+                char.properties.writeWithoutResponse
+              ) {
+                characteristic = char;
+                service = svc;
+                addDebugLog(`✅ Found writable characteristic: ${char.uuid}`);
+                foundService = true;
+                break;
+              }
+            }
+            if (foundService) break;
+          } catch (err) {
+            // Continue
           }
         }
+      }
+
+      if (!foundService || !characteristic) {
+        throw new Error(
+          "No compatible BLE service found. Your printer may only support Classic Bluetooth mode."
+        );
       }
 
       setBluetoothDevice(device);
       setBluetoothCharacteristic(characteristic);
       setIsConnected(true);
-      setConnectionType("bluetooth");
-      alert(`✅ Successfully connected to ${device.name} via Bluetooth!`);
+
+      alert(`✅ Connected to ${device.name || "printer"} in BLE mode!`);
+      addDebugLog(`✅ BLE connection established`);
     } catch (error) {
-      console.error("Bluetooth connection error:", error);
+      addDebugLog(`❌ BLE connection error: ${error.message}`);
       if (error.name === "NotFoundError") {
         alert("❌ No device selected. Please try again.");
       } else {
-        alert("❌ Failed to connect via Bluetooth: " + error.message);
+        alert("❌ Failed to connect in BLE mode: " + error.message);
       }
     }
   };
 
-  // Web Serial API Connection (Desktop Chrome/Edge only)
-  const connectViaWebSerial = async () => {
+  // Classic Mode Connection (Web Serial API)
+  const connectClassicMode = async () => {
     try {
       if (!navigator.serial) {
         alert(
-          "⚠️ Web Serial API is not supported on this browser.\n\n" +
-            "Please use the Bluetooth option instead."
+          "⚠️ Classic Bluetooth mode requires Web Serial API.\n\n" +
+            "This is only available on Desktop Chrome/Edge.\n\n" +
+            "Please use BLE mode on mobile, or switch to desktop."
         );
         return;
       }
 
-      // Request Serial Port
+      addDebugLog("🔍 Requesting Serial Port (Classic Bluetooth)...");
+
       const port = await navigator.serial.requestPort({
         filters: [
           { bluetoothServiceClassId: "00001101-0000-1000-8000-00805f9b34fb" },
@@ -158,49 +215,43 @@ const App = () => {
 
       setSerialPort(port);
       setIsConnected(true);
-      setConnectionType("serial");
-      alert("✅ Successfully connected via Serial!");
+
+      alert("✅ Connected in Classic Bluetooth mode!");
+      addDebugLog("✅ Classic Bluetooth connection established");
     } catch (error) {
-      console.error("Serial connection error:", error);
+      addDebugLog(`❌ Classic mode error: ${error.message}`);
       if (error.name === "NotFoundError") {
         alert("❌ No device selected. Please try again.");
       } else {
-        alert("❌ Failed to connect via Serial: " + error.message);
+        alert("❌ Failed to connect in Classic mode: " + error.message);
       }
     }
   };
 
   const connectPrinter = async () => {
-    // Try Web Bluetooth first (works on mobile)
-    if (navigator.bluetooth) {
-      await connectViaWebBluetooth();
-    }
-    // Fall back to Web Serial (desktop only)
-    else if (navigator.serial) {
-      await connectViaWebSerial();
+    setDebugLog([]);
+    if (connectionMode === "ble") {
+      await connectBLEMode();
     } else {
-      alert(
-        "⚠️ Your browser doesn't support Bluetooth or Serial printing.\n\n" +
-          "Please use Chrome or Edge, or download the TSPL file instead."
-      );
+      await connectClassicMode();
     }
   };
 
   const disconnectPrinter = async () => {
     try {
-      if (connectionType === "bluetooth" && bluetoothDevice) {
-        if (bluetoothDevice.gatt.connected) {
-          bluetoothDevice.gatt.disconnect();
-        }
+      if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+        bluetoothDevice.gatt.disconnect();
         setBluetoothDevice(null);
         setBluetoothCharacteristic(null);
-      } else if (connectionType === "serial" && serialPort) {
+      }
+
+      if (serialPort) {
         await serialPort.close();
         setSerialPort(null);
       }
 
       setIsConnected(false);
-      setConnectionType(null);
+      setDebugLog([]);
       alert("Disconnected from printer");
     } catch (error) {
       console.error("Disconnect error:", error);
@@ -220,62 +271,87 @@ const App = () => {
     tspl += `SET PARTIAL_CUTTER OFF\r\n`;
     tspl += `SET TEAR ON\r\n`;
     tspl += `CLS\r\n`;
-
-    // Add border on all 4 sides (2mm from edge)
     tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      // Centered barcode
       tspl += `BARCODE 60,100,"128",70,1,0,2,2,"${code}"\r\n`;
       tspl += `TEXT 100,185,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      // Centered QR code
       tspl += `QRCODE 100,70,H,5,A,0,"${code}"\r\n`;
       tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      // Centered Data Matrix
       tspl += `DMATRIX 90,70,140,140,"${code}"\r\n`;
       tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
-
     return tspl;
   };
 
-  // Send data via Web Bluetooth
-  const sendViaBluetooth = async (data) => {
+  // Send via BLE
+  const sendViaBLE = async (data) => {
     if (!bluetoothCharacteristic) {
-      throw new Error("Not connected to Bluetooth device");
+      throw new Error("Not connected to BLE device");
     }
 
     const encoder = new TextEncoder();
     const bytes = encoder.encode(data);
 
-    // BLE has a maximum packet size (typically 20 bytes for older devices, up to 512 for newer)
-    // We'll use 20 bytes to be safe
-    const chunkSize = 20;
+    addDebugLog(`📤 Sending ${bytes.length} bytes via BLE...`);
 
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.slice(i, Math.min(i + chunkSize, bytes.length));
-      await bluetoothCharacteristic.writeValue(chunk);
-      // Small delay between chunks
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    const useWriteWithoutResponse =
+      bluetoothCharacteristic.properties.writeWithoutResponse;
+
+    // Try 512-byte chunks first
+    const chunkSize = 512;
+
+    try {
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.slice(i, Math.min(i + chunkSize, bytes.length));
+
+        if (useWriteWithoutResponse) {
+          await bluetoothCharacteristic.writeValueWithoutResponse(chunk);
+        } else {
+          await bluetoothCharacteristic.writeValue(chunk);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      addDebugLog(`✅ BLE data sent successfully`);
+    } catch (error) {
+      addDebugLog(`❌ BLE send error: ${error.message}`);
+      addDebugLog(`🔄 Retrying with 20-byte chunks...`);
+
+      // Fallback to smaller chunks
+      const smallChunkSize = 20;
+      for (let i = 0; i < bytes.length; i += smallChunkSize) {
+        const chunk = bytes.slice(
+          i,
+          Math.min(i + smallChunkSize, bytes.length)
+        );
+        await bluetoothCharacteristic.writeValue(chunk);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      addDebugLog(`✅ BLE data sent with small chunks`);
     }
   };
 
-  // Send data via Web Serial
-  const sendViaSerial = async (data) => {
+  // Send via Classic Bluetooth (Serial)
+  const sendViaClassic = async (data) => {
     if (!serialPort) {
-      throw new Error("Not connected to Serial device");
+      throw new Error("Not connected to Classic Bluetooth");
     }
 
     const writer = serialPort.writable.getWriter();
     const encoder = new TextEncoder();
     const bytes = encoder.encode(data);
 
+    addDebugLog(`📤 Sending ${bytes.length} bytes via Classic Bluetooth...`);
+
     await writer.write(bytes);
     writer.releaseLock();
+
+    addDebugLog(`✅ Classic Bluetooth data sent successfully`);
   };
 
   const printLabels = async () => {
@@ -290,65 +366,34 @@ const App = () => {
     }
 
     setIsPrinting(true);
+    addDebugLog(`🖨️ Starting print job (${generatedCodes.length} labels)...`);
 
     try {
-      for (const code of generatedCodes) {
+      for (let i = 0; i < generatedCodes.length; i++) {
+        const code = generatedCodes[i];
+        addDebugLog(
+          `🏷️ Printing label ${i + 1}/${generatedCodes.length}: ${code}`
+        );
+
         const tsplCommand = generateTSPLCommand(code);
 
-        if (connectionType === "bluetooth") {
-          await sendViaBluetooth(tsplCommand);
-        } else if (connectionType === "serial") {
-          await sendViaSerial(tsplCommand);
+        if (connectionMode === "ble" && bluetoothCharacteristic) {
+          await sendViaBLE(tsplCommand);
+        } else if (connectionMode === "classic" && serialPort) {
+          await sendViaClassic(tsplCommand);
         }
 
-        // Wait for printer to process
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
-      alert(`✅ Successfully printed ${generatedCodes.length} labels!`);
+      addDebugLog(`✅ Print job completed!`);
+      alert(`✅ Sent ${generatedCodes.length} labels to printer!`);
     } catch (error) {
       console.error("Print error:", error);
+      addDebugLog(`❌ Print error: ${error.message}`);
       alert("❌ Failed to print: " + error.message);
     } finally {
       setIsPrinting(false);
-    }
-  };
-
-  const printViaUSB = async () => {
-    if (generatedCodes.length === 0) {
-      alert("Please generate codes first");
-      return;
-    }
-
-    try {
-      if (!navigator.serial) {
-        alert(
-          "⚠️ Web Serial API is not supported on this browser.\n\n" +
-            "Please use the Bluetooth option or download the TSPL file instead."
-        );
-        return;
-      }
-
-      const port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 9600 });
-
-      const writer = port.writable.getWriter();
-      const encoder = new TextEncoder();
-
-      for (const code of generatedCodes) {
-        const tsplCommand = generateTSPLCommand(code);
-        const data = encoder.encode(tsplCommand);
-        await writer.write(data);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      writer.releaseLock();
-      await port.close();
-
-      alert(`✅ Successfully printed ${generatedCodes.length} labels via USB!`);
-    } catch (error) {
-      console.error("USB Print error:", error);
-      alert("❌ Failed to print via USB: " + error.message);
     }
   };
 
@@ -374,6 +419,7 @@ const App = () => {
     URL.revokeObjectURL(url);
 
     alert("✅ TSPL file downloaded successfully!");
+    addDebugLog("✅ TSPL file downloaded");
   };
 
   return (
@@ -446,7 +492,6 @@ const App = () => {
       <nav className="no-print bg-white shadow-md sticky top-0 z-50">
         <div className="max-w-[1550px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            {/* Logo - Left Side */}
             <div className="flex items-center">
               <img
                 src={logo}
@@ -455,14 +500,12 @@ const App = () => {
               />
             </div>
 
-            {/* Bluetooth Connection Button - Right Side */}
             <div className="flex items-center">
               {isConnected ? (
                 <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-xs sm:text-sm text-green-700 font-medium hidden sm:inline">
-                    Connected (
-                    {connectionType === "bluetooth" ? "BLE" : "Serial"})
+                    Connected ({connectionMode === "ble" ? "BLE" : "Classic"})
                   </span>
                   <span className="text-xs sm:text-sm text-green-700 font-medium sm:hidden">
                     Connected
@@ -480,7 +523,9 @@ const App = () => {
                   className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
                 >
                   <Bluetooth size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  <span className="whitespace-nowrap">Connect Printer</span>
+                  <span className="whitespace-nowrap">
+                    Connect ({connectionMode === "ble" ? "BLE" : "Classic"})
+                  </span>
                 </button>
               )}
             </div>
@@ -490,21 +535,71 @@ const App = () => {
 
       <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-[1550px] mx-auto w-full">
-          {/* Header - Responsive */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Alpha 40L - Bluetooth Print (Mobile & Desktop)
+              TSC Alpha 40L Label Printer
             </h1>
           </div>
 
-          {/* Browser Compatibility Notice */}
-          <div className="no-print bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs sm:text-sm text-blue-800">
-            <strong>📱 Works on Mobile & Desktop!</strong> This app now supports
-            Bluetooth printing on mobile Chrome using Web Bluetooth API. Make
-            sure your TSC printer supports Bluetooth Low Energy (BLE).
+          {/* Connection Mode Selector */}
+          <div className="no-print bg-white rounded-lg shadow-md p-4 mb-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Select Connection Mode:
+            </h3>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConnectionMode("ble")}
+                disabled={isConnected}
+                className={`flex-1 px-4 py-3 rounded-lg font-medium transition-colors ${
+                  connectionMode === "ble"
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                } ${isConnected ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                📱 BLE Mode
+                <div className="text-xs mt-1 opacity-80">
+                  (Mobile & Desktop)
+                </div>
+              </button>
+
+              <button
+                onClick={() => setConnectionMode("classic")}
+                disabled={isConnected}
+                className={`flex-1 px-4 py-3 rounded-lg font-medium transition-colors ${
+                  connectionMode === "classic"
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                } ${isConnected ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                🖥️ Classic Mode
+                <div className="text-xs mt-1 opacity-80">(Desktop Only)</div>
+              </button>
+            </div>
+            <div className="mt-3 text-xs text-gray-600">
+              <strong>Note:</strong> If BLE mode connects but doesn't print, try
+              Classic mode on desktop.
+            </div>
           </div>
 
-          {/* Input Form - Responsive */}
+          {/* Debug Log */}
+          {debugLog.length > 0 && (
+            <div className="no-print bg-gray-900 text-green-400 rounded-lg p-3 mb-4 text-xs font-mono max-h-48 overflow-y-auto">
+              <div className="flex justify-between items-center mb-2">
+                <strong className="text-white">🔍 Debug Log:</strong>
+                <button
+                  onClick={() => setDebugLog([])}
+                  className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Clear
+                </button>
+              </div>
+              {debugLog.map((log, index) => (
+                <div key={index}>{log}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Input Form */}
           <div className="no-print bg-white rounded-lg shadow-md p-3 sm:p-4 md:p-6 mb-4 sm:mb-6 lg:mb-8">
             <div className="space-y-3 sm:space-y-4">
               <div>
@@ -591,23 +686,15 @@ const App = () => {
                     disabled={!isConnected || isPrinting}
                     className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-sm sm:text-base"
                   >
-                    <Bluetooth size={18} className="sm:w-5 sm:h-5" />
+                    <Printer size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      {isPrinting ? "Printing..." : "Print via Bluetooth"}
+                      {isPrinting
+                        ? "Printing..."
+                        : `Print (${
+                            connectionMode === "ble" ? "BLE" : "Classic"
+                          })`}
                     </span>
                   </button>
-
-                  {navigator.serial && (
-                    <button
-                      onClick={printViaUSB}
-                      className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors text-sm sm:text-base"
-                    >
-                      <Printer size={18} className="sm:w-5 sm:h-5" />
-                      <span className="whitespace-nowrap">
-                        Print via USB (Desktop Only)
-                      </span>
-                    </button>
-                  )}
 
                   <button
                     onClick={downloadTSPLFile}
@@ -615,46 +702,15 @@ const App = () => {
                   >
                     <Download size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Download TSPL File (Backup)
+                      Download TSPL File
                     </span>
                   </button>
-
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm text-yellow-800">
-                    <strong>📱 Bluetooth Printing Steps:</strong>
-                    <ol className="list-decimal ml-3 sm:ml-4 mt-1 sm:mt-2 space-y-1">
-                      <li>
-                        <strong>Enable Bluetooth:</strong> Turn on Bluetooth on
-                        your device
-                      </li>
-                      <li>
-                        <strong>Turn on printer:</strong> Make sure TSC Alpha
-                        40L is powered on
-                      </li>
-                      <li>
-                        Click <strong>"Connect Printer"</strong> button above
-                      </li>
-                      <li>
-                        Select your <strong>TSC printer</strong> from the list
-                      </li>
-                      <li>
-                        Click <strong>"Print via Bluetooth"</strong> to print
-                        labels
-                      </li>
-                    </ol>
-                    <div className="mt-2 pt-2 border-t border-yellow-300">
-                      <strong>⚠️ Important:</strong> Your TSC printer must
-                      support <strong>Bluetooth Low Energy (BLE)</strong> for
-                      mobile printing. If connection fails, your printer may
-                      only support classic Bluetooth, which requires desktop
-                      Chrome.
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Generated Codes Preview - Responsive Grid */}
+          {/* Preview */}
           {generatedCodes.length > 0 && (
             <>
               <h2 className="no-print text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-3 sm:mb-4">
