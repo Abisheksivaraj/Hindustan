@@ -4,8 +4,6 @@ import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 
-import logo from "../src/assets/logo.png";
-
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
   const [quantity, setQuantity] = useState(10);
@@ -41,20 +39,17 @@ const App = () => {
     try {
       if (!navigator.serial) {
         alert(
-          "Web Serial API is not supported. Please use Chrome 117+ or Edge on Android/Desktop."
+          "Web Serial API is not supported.\n\nFor TC15: Use 'Download TSPL File' button.\n\nFor TC27: Update Chrome to version 117+"
         );
         return;
       }
 
-      // Request Bluetooth Serial Port
       const port = await navigator.serial.requestPort({
-        // Allow standard SPP UUID
         filters: [
           { bluetoothServiceClassId: "00001101-0000-1000-8000-00805f9b34fb" },
         ],
       });
 
-      // Open the serial port with appropriate settings for TSC printer
       await port.open({
         baudRate: 9600,
         dataBits: 8,
@@ -98,26 +93,20 @@ const App = () => {
     tspl += `SET PARTIAL_CUTTER OFF\r\n`;
     tspl += `SET TEAR ON\r\n`;
     tspl += `CLS\r\n`;
-
-    // Add border on all 4 sides (2mm from edge)
     tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      // Centered barcode
       tspl += `BARCODE 60,100,"128",70,1,0,2,2,"${code}"\r\n`;
       tspl += `TEXT 100,185,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      // Centered QR code
       tspl += `QRCODE 100,70,H,5,A,0,"${code}"\r\n`;
       tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      // Centered Data Matrix
       tspl += `DMATRIX 90,70,140,140,"${code}"\r\n`;
       tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
-
     return tspl;
   };
 
@@ -141,10 +130,7 @@ const App = () => {
       for (const code of generatedCodes) {
         const tsplCommand = generateTSPLCommand(code);
         const data = encoder.encode(tsplCommand);
-
         await writer.write(data);
-
-        // Wait for printer to process
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
@@ -201,7 +187,7 @@ const App = () => {
 
     let tsplContent = "";
     generatedCodes.forEach((code) => {
-      tsplContent += generateTSPLCommand(code) + "\n";
+      tsplContent += generateTSPLCommand(code);
     });
 
     const blob = new Blob([tsplContent], { type: "text/plain" });
@@ -213,6 +199,14 @@ const App = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleBrowserPrint = () => {
+    if (generatedCodes.length === 0) {
+      alert("Please generate codes first");
+      return;
+    }
+    window.print();
   };
 
   return (
@@ -246,7 +240,7 @@ const App = () => {
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
-            justify-content: center !important;
+            justify-center: center !important;
             background: white !important;
           }
           
@@ -281,33 +275,23 @@ const App = () => {
         }
       `}</style>
 
-      {/* Navbar */}
-      <nav className="no-print bg-white shadow-md sticky top-0 z-50">
-        <div className="max-w-[1550px] mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo - Left Side */}
-            <div className="flex items-center">
-              <img
-                src={logo}
-                alt="Company Logo"
-                className="h-8 sm:h-10 w-auto"
-              />
-            </div>
+      <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
+        <div className="max-w-[1550px] mx-auto w-full">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
+              TSC Alpha 40L - Barcode Printer
+            </h1>
 
-            {/* Bluetooth Connection Button - Right Side */}
-            <div className="flex items-center">
+            <div className="no-print flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
               {isConnected ? (
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs sm:text-sm text-green-700 font-medium hidden sm:inline">
-                    Connected to PS-9CF636
-                  </span>
-                  <span className="text-xs sm:text-sm text-green-700 font-medium sm:hidden">
+                  <span className="text-xs sm:text-sm text-green-700 font-medium">
                     Connected
                   </span>
                   <button
                     onClick={disconnectPrinter}
-                    className="ml-2 px-2 sm:px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                    className="ml-auto sm:ml-2 px-2 sm:px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
                   >
                     Disconnect
                   </button>
@@ -315,7 +299,7 @@ const App = () => {
               ) : (
                 <button
                   onClick={connectBluetoothPrinter}
-                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base w-full sm:w-auto"
                 >
                   <Bluetooth size={16} className="sm:w-[18px] sm:h-[18px]" />
                   <span className="whitespace-nowrap">Connect Bluetooth</span>
@@ -323,26 +307,22 @@ const App = () => {
               )}
             </div>
           </div>
-        </div>
-      </nav>
 
-      <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
-        <div className="max-w-[1550px] mx-auto w-full">
-          {/* Header - Responsive */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Alpha 40L - Direct Bluetooth Print
-            </h1>
+          <div className="no-print bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-3 mb-4 text-xs sm:text-sm">
+            <div className="flex items-start gap-2">
+              <span className="text-lg">🖨️</span>
+              <div>
+                <strong className="text-blue-900">
+                  Multiple Print Options Available
+                </strong>
+                <p className="text-blue-800 mt-1">
+                  Use Browser Print for preview, Direct Bluetooth for TC27, USB
+                  for desktop, or download TSPL file.
+                </p>
+              </div>
+            </div>
           </div>
 
-          {/* Browser Compatibility Notice */}
-          <div className="no-print bg-blue-50 border border-pink-200 rounded-lg p-3 mb-4 text-xs sm:text-sm text-[red]">
-            <strong>📱 Note:</strong> Chrome 117+ or Edge on
-            Android/Desktop. Make sure your TSC Alpha 40L is paired in device
-            Bluetooth settings first.
-          </div>
-
-          {/* Input Form - Responsive */}
           <div className="no-print bg-white rounded-lg shadow-md p-3 sm:p-4 md:p-6 mb-4 sm:mb-6 lg:mb-8">
             <div className="space-y-3 sm:space-y-4">
               <div>
@@ -368,25 +348,9 @@ const App = () => {
                 <input
                   type="number"
                   value={quantity}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    // Allow empty field or valid numbers
-                    if (value === "" || value === "0") {
-                      setQuantity("");
-                    } else {
-                      const numValue = parseInt(value);
-                      if (!isNaN(numValue) && numValue >= 0) {
-                        setQuantity(numValue);
-                      }
-                    }
-                  }}
-                  onBlur={(e) => {
-                    // On blur, ensure we have a valid minimum value
-                    const value = e.target.value;
-                    if (value === "" || parseInt(value) < 1) {
-                      setQuantity(1);
-                    }
-                  }}
+                  onChange={(e) =>
+                    setQuantity(Math.max(1, parseInt(e.target.value) || 1))
+                  }
                   min="1"
                   max="1000"
                   className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -409,8 +373,7 @@ const App = () => {
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm text-blue-800">
-                <strong>Label Size:</strong> 50mm × 50mm for TSC Alpha 40L
-                printer
+                <strong>Label Size:</strong> 50mm × 50mm with 2mm border
               </div>
 
               <button
@@ -427,15 +390,23 @@ const App = () => {
                   </h3>
 
                   <button
+                    onClick={handleBrowserPrint}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 sm:px-6 py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-colors text-sm sm:text-base shadow-lg"
+                  >
+                    <Printer size={20} className="sm:w-6 sm:h-6" />
+                    <span className="whitespace-nowrap">
+                      🖨️ Print (Browser Preview)
+                    </span>
+                  </button>
+
+                  <button
                     onClick={printViaBluetooth}
                     disabled={!isConnected || isPrinting}
                     className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-sm sm:text-base"
                   >
                     <Bluetooth size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      {isPrinting
-                        ? "Printing..."
-                        : "Print via Bluetooth (Direct)"}
+                      {isPrinting ? "Printing..." : "Direct Bluetooth (TC27)"}
                     </span>
                   </button>
 
@@ -445,7 +416,7 @@ const App = () => {
                   >
                     <Printer size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Print via USB (Desktop)
+                      USB Print (Desktop)
                     </span>
                   </button>
 
@@ -455,35 +426,14 @@ const App = () => {
                   >
                     <Download size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Download TSPL (Backup)
+                      Download TSPL File
                     </span>
                   </button>
-
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm text-yellow-800">
-                    <strong>📱 Bluetooth Printing Steps:</strong>
-                    <ol className="list-decimal ml-3 sm:ml-4 mt-1 sm:mt-2 space-y-1">
-                      <li>
-                        <strong>Pair first:</strong> Go to device Bluetooth
-                        settings → Pair with PS-9CF636
-                      </li>
-                      <li>
-                        Click <strong>"Connect via Bluetooth"</strong> above
-                      </li>
-                      <li>
-                        Select <strong>PS-9CF636</strong> from the list
-                      </li>
-                      <li>
-                        Click <strong>"Print via Bluetooth"</strong> to print
-                        labels
-                      </li>
-                    </ol>
-                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Generated Codes Preview - Responsive Grid */}
           {generatedCodes.length > 0 && (
             <>
               <h2 className="no-print text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-3 sm:mb-4">
