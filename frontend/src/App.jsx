@@ -9,7 +9,7 @@ const App = () => {
   const [quantity, setQuantity] = useState(10);
   const [codeType, setCodeType] = useState("barcode");
   const [generatedCodes, setGeneratedCodes] = useState([]);
-  const [bluetoothDevice, setBluetoothDevice] = useState(null);
+  const [serialPort, setSerialPort] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
 
@@ -35,70 +35,86 @@ const App = () => {
     setGeneratedCodes(codes);
   };
 
-  const connectBluetooth = async () => {
+  const connectBluetoothPrinter = async () => {
     try {
-      if (!navigator.bluetooth) {
+      if (!navigator.serial) {
         alert(
-          "Web Bluetooth API is not supported in this browser. Please use Chrome, Edge, or Opera on Android/Windows/Mac."
+          "Web Serial API is not supported. Please use Chrome 117+ or Edge on Android/Desktop."
         );
         return;
       }
 
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: ["00001101-0000-1000-8000-00805f9b34fb"],
+      // Request Bluetooth Serial Port
+      const port = await navigator.serial.requestPort({
+        // Allow standard SPP UUID
+        filters: [
+          { bluetoothServiceClassId: "00001101-0000-1000-8000-00805f9b34fb" },
+        ],
       });
 
-      const server = await device.gatt.connect();
-      setBluetoothDevice({ device, server });
+      // Open the serial port with appropriate settings for TSC printer
+      await port.open({
+        baudRate: 9600,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+      });
+
+      setSerialPort(port);
       setIsConnected(true);
-      alert(`Connected to ${device.name || "TSC Printer"}`);
+      alert("Successfully connected to TSC Alpha 40L printer!");
     } catch (error) {
-      console.error("Bluetooth connection error:", error);
-      alert("Failed to connect to printer: " + error.message);
+      console.error("Connection error:", error);
+      alert("Failed to connect: " + error.message);
     }
   };
 
-  const disconnectBluetooth = () => {
-    if (bluetoothDevice?.device?.gatt?.connected) {
-      bluetoothDevice.device.gatt.disconnect();
+  const disconnectPrinter = async () => {
+    try {
+      if (serialPort) {
+        await serialPort.close();
+        setSerialPort(null);
+        setIsConnected(false);
+        alert("Disconnected from printer");
+      }
+    } catch (error) {
+      console.error("Disconnect error:", error);
     }
-    setBluetoothDevice(null);
-    setIsConnected(false);
   };
 
   const generateTSPLCommand = (code) => {
     let tspl = "";
 
-    tspl += `SIZE 50 mm, 50 mm\n`;
-    tspl += `GAP 2 mm, 0 mm\n`;
-    tspl += `DIRECTION 0\n`;
-    tspl += `REFERENCE 0,0\n`;
-    tspl += `OFFSET 0 mm\n`;
-    tspl += `SET PEEL OFF\n`;
-    tspl += `SET CUTTER OFF\n`;
-    tspl += `SET PARTIAL_CUTTER OFF\n`;
-    tspl += `SET TEAR ON\n`;
-    tspl += `CLS\n`;
+    tspl += `SIZE 50 mm, 50 mm\r\n`;
+    tspl += `GAP 2 mm, 0 mm\r\n`;
+    tspl += `DIRECTION 0\r\n`;
+    tspl += `REFERENCE 0,0\r\n`;
+    tspl += `OFFSET 0 mm\r\n`;
+    tspl += `SET PEEL OFF\r\n`;
+    tspl += `SET CUTTER OFF\r\n`;
+    tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+    tspl += `SET TEAR ON\r\n`;
+    tspl += `CLS\r\n`;
 
     if (codeType === "barcode") {
-      tspl += `BARCODE 50,80,"128",60,1,0,2,2,"${code}"\n`;
-      tspl += `TEXT 70,150,"3",0,1,1,"${code}"\n`;
+      tspl += `BARCODE 50,80,"128",60,1,0,2,2,"${code}"\r\n`;
+      tspl += `TEXT 70,150,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      tspl += `QRCODE 60,50,H,5,A,0,"${code}"\n`;
-      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\n`;
+      tspl += `QRCODE 60,50,H,5,A,0,"${code}"\r\n`;
+      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DMATRIX 50,50,140,140,"${code}"\n`;
-      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\n`;
+      tspl += `DMATRIX 50,50,140,140,"${code}"\r\n`;
+      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\r\n`;
     }
 
-    tspl += `PRINT 1,1\n`;
+    tspl += `PRINT 1,1\r\n`;
 
     return tspl;
   };
 
   const printViaBluetooth = async () => {
-    if (!isConnected || !bluetoothDevice) {
+    if (!isConnected || !serialPort) {
       alert("Please connect to printer first");
       return;
     }
@@ -111,28 +127,20 @@ const App = () => {
     setIsPrinting(true);
 
     try {
-      const service = await bluetoothDevice.server.getPrimaryService(
-        "00001101-0000-1000-8000-00805f9b34fb"
-      );
-      const characteristic = await service.getCharacteristic(
-        "00001101-0000-1000-8000-00805f9b34fb"
-      );
+      const writer = serialPort.writable.getWriter();
+      const encoder = new TextEncoder();
 
       for (const code of generatedCodes) {
         const tsplCommand = generateTSPLCommand(code);
-        const encoder = new TextEncoder();
         const data = encoder.encode(tsplCommand);
 
-        const chunkSize = 512;
-        for (let i = 0; i < data.length; i += chunkSize) {
-          const chunk = data.slice(i, i + chunkSize);
-          await characteristic.writeValue(chunk);
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+        await writer.write(data);
 
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        // Wait for printer to process
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
+      writer.releaseLock();
       alert(`Successfully printed ${generatedCodes.length} labels!`);
     } catch (error) {
       console.error("Print error:", error);
@@ -164,7 +172,7 @@ const App = () => {
         const tsplCommand = generateTSPLCommand(code);
         const data = encoder.encode(tsplCommand);
         await writer.write(data);
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
       writer.releaseLock();
@@ -240,14 +248,12 @@ const App = () => {
           }
         }
         
-        /* Responsive label preview sizes */
         .label-preview {
           width: 100%;
           aspect-ratio: 1;
           max-width: 189px;
         }
 
-        /* Hide scrollbar for cleaner mobile view */
         body::-webkit-scrollbar {
           width: 8px;
         }
@@ -271,19 +277,19 @@ const App = () => {
           {/* Header - Responsive */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Direct Print - Barcode Generator
+              TSC Alpha 40L - Direct Bluetooth Print
             </h1>
 
-            {/* Bluetooth Connection Status */}
+            {/* Connection Status */}
             <div className="no-print flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
               {isConnected ? (
-                <div className="flex items-center gap-2 w-full sm:w-auto">
+                <div className="flex items-center gap-2 w-full sm:w-auto bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-xs sm:text-sm text-green-700 font-medium">
-                    Connected
+                    Connected to PS-9CF636
                   </span>
                   <button
-                    onClick={disconnectBluetooth}
+                    onClick={disconnectPrinter}
                     className="ml-auto sm:ml-2 px-2 sm:px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
                   >
                     Disconnect
@@ -291,14 +297,23 @@ const App = () => {
                 </div>
               ) : (
                 <button
-                  onClick={connectBluetooth}
+                  onClick={connectBluetoothPrinter}
                   className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base w-full sm:w-auto"
                 >
                   <Bluetooth size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  <span className="whitespace-nowrap">Connect Printer</span>
+                  <span className="whitespace-nowrap">
+                    Connect via Bluetooth
+                  </span>
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Browser Compatibility Notice */}
+          <div className="no-print bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs sm:text-sm text-blue-800">
+            <strong>📱 Requirements:</strong> Chrome 117+ or Edge on
+            Android/Desktop. Make sure your TSC Alpha 40L is paired in device
+            Bluetooth settings first.
           </div>
 
           {/* Input Form - Responsive */}
@@ -366,7 +381,7 @@ const App = () => {
               {generatedCodes.length > 0 && (
                 <div className="space-y-2 sm:space-y-3 pt-3 sm:pt-4 border-t">
                   <h3 className="font-semibold text-gray-800 text-sm sm:text-base">
-                    Direct Print Options:
+                    Print Options:
                   </h3>
 
                   <button
@@ -376,7 +391,9 @@ const App = () => {
                   >
                     <Bluetooth size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      {isPrinting ? "Printing..." : "Print via Bluetooth"}
+                      {isPrinting
+                        ? "Printing..."
+                        : "Print via Bluetooth (Direct)"}
                     </span>
                   </button>
 
@@ -386,7 +403,7 @@ const App = () => {
                   >
                     <Printer size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Print via USB/Serial
+                      Print via USB (Desktop)
                     </span>
                   </button>
 
@@ -396,26 +413,28 @@ const App = () => {
                   >
                     <Download size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Download TSPL File
+                      Download TSPL (Backup)
                     </span>
                   </button>
 
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 sm:p-3 text-xs sm:text-sm text-yellow-800">
-                    <strong>Instructions:</strong>
-                    <ul className="list-disc ml-3 sm:ml-4 mt-1 sm:mt-2 space-y-1">
+                    <strong>📱 Bluetooth Printing Steps:</strong>
+                    <ol className="list-decimal ml-3 sm:ml-4 mt-1 sm:mt-2 space-y-1">
                       <li>
-                        <strong>Mobile (Zebra HHT):</strong> Connect Printer →
-                        Print via Bluetooth
+                        <strong>Pair first:</strong> Go to device Bluetooth
+                        settings → Pair with PS-9CF636
                       </li>
                       <li>
-                        <strong>Desktop:</strong> Connect USB → Print via
-                        USB/Serial
+                        Click <strong>"Connect via Bluetooth"</strong> above
                       </li>
                       <li>
-                        <strong>Backup:</strong> Download TSPL file for TSC
-                        Mobile Utility
+                        Select <strong>PS-9CF636</strong> from the list
                       </li>
-                    </ul>
+                      <li>
+                        Click <strong>"Print via Bluetooth"</strong> to print
+                        labels
+                      </li>
+                    </ol>
                   </div>
                 </div>
               )}
