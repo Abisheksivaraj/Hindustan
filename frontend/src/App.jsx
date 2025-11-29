@@ -3,6 +3,7 @@ import { Printer, Bluetooth, Download } from "lucide-react";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
+import jsPDF from "jspdf";
 
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
@@ -96,14 +97,17 @@ const App = () => {
     tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      tspl += `BARCODE 60,100,"128",70,1,0,2,2,"${code}"\r\n`;
-      tspl += `TEXT 100,185,"3",0,1,1,"${code}"\r\n`;
+      // Centered barcode - adjusted position
+      tspl += `BARCODE 92,120,"128",70,1,0,2,2,"${code}"\r\n`;
+      tspl += `TEXT 132,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      tspl += `QRCODE 100,70,H,5,A,0,"${code}"\r\n`;
-      tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
+      // Centered QR code
+      tspl += `QRCODE 130,90,H,5,A,0,"${code}"\r\n`;
+      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DMATRIX 90,70,140,140,"${code}"\r\n`;
-      tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
+      // Centered Data Matrix
+      tspl += `DMATRIX 120,90,140,140,"${code}"\r\n`;
+      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
@@ -179,28 +183,6 @@ const App = () => {
     }
   };
 
-  const downloadTSPLFile = () => {
-    if (generatedCodes.length === 0) {
-      alert("Please generate codes first");
-      return;
-    }
-
-    let tsplContent = "";
-    generatedCodes.forEach((code) => {
-      tsplContent += generateTSPLCommand(code);
-    });
-
-    const blob = new Blob([tsplContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `labels_${baseName}_${quantity}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
   const handleBrowserPrint = () => {
     if (generatedCodes.length === 0) {
       alert("Please generate codes first");
@@ -209,13 +191,81 @@ const App = () => {
     window.print();
   };
 
+  const downloadTSPLFile = () => {
+    if (generatedCodes.length === 0) {
+      alert("Please generate codes first");
+      return;
+    }
+
+    try {
+      // Generate all TSPL commands
+      let tsplContent = "";
+      generatedCodes.forEach((code) => {
+        tsplContent += generateTSPLCommand(code);
+        tsplContent += "\n";
+      });
+
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Set font
+      pdf.setFontSize(8);
+      pdf.setFont("courier");
+
+      // PDF dimensions
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const maxWidth = pageWidth - 2 * margin;
+      const lineHeight = 4;
+      let yPosition = margin;
+
+      // Add TSPL commands only
+      const lines = tsplContent.split("\n");
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Check if we need a new page
+        if (yPosition > pageHeight - margin) {
+          pdf.addPage();
+          yPosition = margin;
+        }
+
+        // Split long lines
+        const splitLines = pdf.splitTextToSize(line, maxWidth);
+
+        for (let j = 0; j < splitLines.length; j++) {
+          if (yPosition > pageHeight - margin) {
+            pdf.addPage();
+            yPosition = margin;
+          }
+
+          pdf.text(splitLines[j], margin, yPosition);
+          yPosition += lineHeight;
+        }
+      }
+
+      // Save PDF
+      pdf.save(`tspl_commands_${baseName}_${quantity}.pdf`);
+      alert(`TSPL commands saved as PDF!`);
+    } catch (error) {
+      console.error("TSPL PDF generation error:", error);
+      alert("Failed to generate TSPL PDF: " + error.message);
+    }
+  };
+
   return (
     <>
       <style>{`
         @media print {
           @page {
-            size: A4;
-            margin: 10mm;
+            size: 50mm 50mm;
+            margin: 0;
           }
           
           .no-print {
@@ -223,30 +273,38 @@ const App = () => {
           }
           
           .print-grid {
-            display: grid !important;
-            grid-template-columns: repeat(3, 50mm) !important;
-            gap: 5mm !important;
+            display: block !important;
             padding: 0 !important;
+            margin: 0 !important;
           }
           
           .print-item {
             width: 50mm !important;
             height: 50mm !important;
             box-sizing: border-box !important;
-            break-inside: avoid !important;
+            page-break-after: always !important;
             page-break-inside: avoid !important;
             padding: 2mm !important;
             border: 2px solid #000000 !important;
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
-            justify-center: center !important;
+            justify-content: center !important;
             background: white !important;
+            margin: 0 !important;
+          }
+          
+          .print-item:last-child {
+            page-break-after: auto !important;
           }
           
           body {
             margin: 0;
             padding: 0;
+          }
+          
+          h1, h2, h3, h4, h5, h6 {
+            display: none !important;
           }
         }
         
@@ -317,7 +375,7 @@ const App = () => {
                 </strong>
                 <p className="text-blue-800 mt-1">
                   Use Browser Print for preview, Direct Bluetooth for TC27, USB
-                  for desktop, or download TSPL file.
+                  for desktop, or download TSPL/PDF file.
                 </p>
               </div>
             </div>
@@ -426,7 +484,7 @@ const App = () => {
                   >
                     <Download size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      Download TSPL File
+                      Download TSPL Commands (PDF)
                     </span>
                   </button>
                 </div>
