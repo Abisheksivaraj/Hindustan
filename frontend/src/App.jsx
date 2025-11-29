@@ -4,6 +4,8 @@ import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 
+import logo from "../src/assets/logo.png";
+
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
   const [quantity, setQuantity] = useState(10);
@@ -97,15 +99,21 @@ const App = () => {
     tspl += `SET TEAR ON\r\n`;
     tspl += `CLS\r\n`;
 
+    // Add border on all 4 sides (2mm from edge)
+    tspl += `BOX 8,8,376,376,2\r\n`;
+
     if (codeType === "barcode") {
-      tspl += `BARCODE 50,80,"128",60,1,0,2,2,"${code}"\r\n`;
-      tspl += `TEXT 70,150,"3",0,1,1,"${code}"\r\n`;
+      // Centered barcode
+      tspl += `BARCODE 60,100,"128",70,1,0,2,2,"${code}"\r\n`;
+      tspl += `TEXT 100,185,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      tspl += `QRCODE 60,50,H,5,A,0,"${code}"\r\n`;
-      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\r\n`;
+      // Centered QR code
+      tspl += `QRCODE 100,70,H,5,A,0,"${code}"\r\n`;
+      tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DMATRIX 50,50,140,140,"${code}"\r\n`;
-      tspl += `TEXT 70,160,"3",0,1,1,"${code}"\r\n`;
+      // Centered Data Matrix
+      tspl += `DMATRIX 90,70,140,140,"${code}"\r\n`;
+      tspl += `TEXT 120,200,"3",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
@@ -234,7 +242,7 @@ const App = () => {
             break-inside: avoid !important;
             page-break-inside: avoid !important;
             padding: 2mm !important;
-            border: 1px solid #e5e7eb !important;
+            border: 2px solid #000000 !important;
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
@@ -252,6 +260,7 @@ const App = () => {
           width: 100%;
           aspect-ratio: 1;
           max-width: 189px;
+          border: 2px solid #000000 !important;
         }
 
         body::-webkit-scrollbar {
@@ -272,25 +281,33 @@ const App = () => {
         }
       `}</style>
 
-      <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
-        <div className="max-w-[1550px] mx-auto w-full">
-          {/* Header - Responsive */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Alpha 40L - Direct Bluetooth Print
-            </h1>
+      {/* Navbar */}
+      <nav className="no-print bg-white shadow-md sticky top-0 z-50">
+        <div className="max-w-[1550px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            {/* Logo - Left Side */}
+            <div className="flex items-center">
+              <img
+                src={logo}
+                alt="Company Logo"
+                className="h-8 sm:h-10 w-auto"
+              />
+            </div>
 
-            {/* Connection Status */}
-            <div className="no-print flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            {/* Bluetooth Connection Button - Right Side */}
+            <div className="flex items-center">
               {isConnected ? (
-                <div className="flex items-center gap-2 w-full sm:w-auto bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs sm:text-sm text-green-700 font-medium">
+                  <span className="text-xs sm:text-sm text-green-700 font-medium hidden sm:inline">
                     Connected to PS-9CF636
+                  </span>
+                  <span className="text-xs sm:text-sm text-green-700 font-medium sm:hidden">
+                    Connected
                   </span>
                   <button
                     onClick={disconnectPrinter}
-                    className="ml-auto sm:ml-2 px-2 sm:px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                    className="ml-2 px-2 sm:px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
                   >
                     Disconnect
                   </button>
@@ -298,20 +315,29 @@ const App = () => {
               ) : (
                 <button
                   onClick={connectBluetoothPrinter}
-                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base w-full sm:w-auto"
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
                 >
                   <Bluetooth size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  <span className="whitespace-nowrap">
-                    Connect via Bluetooth
-                  </span>
+                  <span className="whitespace-nowrap">Connect Bluetooth</span>
                 </button>
               )}
             </div>
           </div>
+        </div>
+      </nav>
+
+      <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
+        <div className="max-w-[1550px] mx-auto w-full">
+          {/* Header - Responsive */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
+              TSC Alpha 40L - Direct Bluetooth Print
+            </h1>
+          </div>
 
           {/* Browser Compatibility Notice */}
-          <div className="no-print bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs sm:text-sm text-blue-800">
-            <strong>📱 Requirements:</strong> Chrome 117+ or Edge on
+          <div className="no-print bg-blue-50 border border-pink-200 rounded-lg p-3 mb-4 text-xs sm:text-sm text-[red]">
+            <strong>📱 Note:</strong> Chrome 117+ or Edge on
             Android/Desktop. Make sure your TSC Alpha 40L is paired in device
             Bluetooth settings first.
           </div>
@@ -342,9 +368,25 @@ const App = () => {
                 <input
                   type="number"
                   value={quantity}
-                  onChange={(e) =>
-                    setQuantity(Math.max(1, parseInt(e.target.value) || 1))
-                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    // Allow empty field or valid numbers
+                    if (value === "" || value === "0") {
+                      setQuantity("");
+                    } else {
+                      const numValue = parseInt(value);
+                      if (!isNaN(numValue) && numValue >= 0) {
+                        setQuantity(numValue);
+                      }
+                    }
+                  }}
+                  onBlur={(e) => {
+                    // On blur, ensure we have a valid minimum value
+                    const value = e.target.value;
+                    if (value === "" || parseInt(value) < 1) {
+                      setQuantity(1);
+                    }
+                  }}
                   min="1"
                   max="1000"
                   className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -476,16 +518,17 @@ const CodeItem = ({ code, type }) => {
         if (type === "barcode" && barcodeRef.current) {
           JsBarcode(barcodeRef.current, code, {
             format: "CODE128",
-            width: 1.5,
-            height: 50,
+            width: 1.8,
+            height: 60,
             displayValue: true,
-            fontSize: 10,
-            margin: 5,
+            fontSize: 12,
+            margin: 8,
+            textMargin: 2,
           });
         } else if (type === "qrcode" && canvasRef.current) {
           await QRCode.toCanvas(canvasRef.current, code, {
-            width: 140,
-            margin: 1,
+            width: 120,
+            margin: 2,
             color: {
               dark: "#000000",
               light: "#FFFFFF",
@@ -495,7 +538,7 @@ const CodeItem = ({ code, type }) => {
           bwipjs.toCanvas(canvasRef.current, {
             bcid: "datamatrix",
             text: code,
-            scale: 4,
+            scale: 3,
             height: 10,
             includetext: false,
             textxalign: "center",
@@ -510,15 +553,15 @@ const CodeItem = ({ code, type }) => {
   }, [code, type]);
 
   return (
-    <div className="print-item label-preview bg-white rounded-lg shadow-sm p-2 flex flex-col items-center justify-center border border-gray-200">
+    <div className="print-item label-preview bg-white rounded-xl shadow-md p-2 flex flex-col items-center justify-center hover:shadow-xl transition-shadow">
       {type === "barcode" ? (
-        <div className="flex flex-col items-center w-full h-full justify-center">
-          <svg ref={barcodeRef} className="max-w-full max-h-full"></svg>
+        <div className="flex flex-col items-center justify-center w-full h-full">
+          <svg ref={barcodeRef} className="max-w-[90%] max-h-[90%]"></svg>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center h-full">
-          <canvas ref={canvasRef} className="max-w-full"></canvas>
-          <p className="text-[10px] sm:text-xs font-medium mt-1 text-gray-700 truncate max-w-full px-1">
+        <div className="flex flex-col items-center justify-center h-full gap-1">
+          <canvas ref={canvasRef} className="max-w-[75%]"></canvas>
+          <p className="text-[11px] sm:text-xs font-semibold text-gray-800 text-center">
             {code}
           </p>
         </div>
