@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Printer, Bluetooth, Download } from "lucide-react";
+import { Printer, Bluetooth, Download, Search } from "lucide-react";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
-import jsPDF from "jspdf";
 
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
   const [quantity, setQuantity] = useState(10);
   const [codeType, setCodeType] = useState("barcode");
   const [generatedCodes, setGeneratedCodes] = useState([]);
-  const [serialPort, setSerialPort] = useState(null);
+  const [bluetoothDevice, setBluetoothDevice] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [status, setStatus] = useState("");
+  const [printerChar, setPrinterChar] = useState(null);
 
   const generateSequence = () => {
     const codes = [];
@@ -38,46 +39,75 @@ const App = () => {
 
   const connectBluetoothPrinter = async () => {
     try {
-      if (!navigator.serial) {
-        alert(
-          "Web Serial API is not supported.\n\nFor TC15: Use 'Download TSPL File' button.\n\nFor TC27: Update Chrome to version 117+"
-        );
+      if (!navigator.bluetooth) {
+        alert("Web Bluetooth is not supported on this browser/device");
         return;
       }
 
-      const port = await navigator.serial.requestPort({
-        filters: [
-          { bluetoothServiceClassId: "00001101-0000-1000-8000-00805f9b34fb" },
+      setStatus("Requesting Bluetooth device...");
+
+      // Request device - accept all to see available printers
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          "000018f0-0000-1000-8000-00805f9b34fb", // Generic printer
+          "49535343-fe7d-4ae5-8fa9-9fafd205e455", // SPP-like service
+          "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Nordic UART
+          "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Another Nordic UART
         ],
       });
 
-      await port.open({
-        baudRate: 9600,
-        dataBits: 8,
-        stopBits: 1,
-        parity: "none",
-        flowControl: "none",
-      });
+      setStatus("Connecting to printer...");
+      const server = await device.gatt.connect();
 
-      setSerialPort(port);
+      setStatus("Discovering services...");
+      const services = await server.getPrimaryServices();
+
+      let foundChar = null;
+
+      // Try to find a writable characteristic
+      for (const service of services) {
+        try {
+          const characteristics = await service.getCharacteristics();
+          for (const char of characteristics) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
+              foundChar = char;
+              setStatus(
+                `Found writable characteristic: ${char.uuid.substring(0, 8)}...`
+              );
+              break;
+            }
+          }
+          if (foundChar) break;
+        } catch (e) {
+          console.log("Service check error:", e);
+        }
+      }
+
+      if (!foundChar) {
+        throw new Error(
+          "No writable characteristic found. Printer may not be compatible."
+        );
+      }
+
+      setPrinterChar(foundChar);
+      setBluetoothDevice(device);
       setIsConnected(true);
-      alert("Successfully connected to TSC Alpha 40L printer!");
+      setStatus(`✅ Connected to ${device.name || "Printer"}`);
     } catch (error) {
-      console.error("Connection error:", error);
+      console.error("Bluetooth error:", error);
+      setStatus(`❌ Error: ${error.message}`);
       alert("Failed to connect: " + error.message);
     }
   };
 
-  const disconnectPrinter = async () => {
-    try {
-      if (serialPort) {
-        await serialPort.close();
-        setSerialPort(null);
-        setIsConnected(false);
-        alert("Disconnected from printer");
-      }
-    } catch (error) {
-      console.error("Disconnect error:", error);
+  const disconnectPrinter = () => {
+    if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+      bluetoothDevice.gatt.disconnect();
+      setBluetoothDevice(null);
+      setPrinterChar(null);
+      setIsConnected(false);
+      setStatus("Disconnected");
     }
   };
 
@@ -97,15 +127,12 @@ const App = () => {
     tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      // Centered barcode - adjusted position
       tspl += `BARCODE 92,120,"128",70,1,0,2,2,"${code}"\r\n`;
       tspl += `TEXT 132,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      // Centered QR code
       tspl += `QRCODE 130,90,H,5,A,0,"${code}"\r\n`;
       tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      // Centered Data Matrix
       tspl += `DMATRIX 120,90,140,140,"${code}"\r\n`;
       tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     }
@@ -115,7 +142,7 @@ const App = () => {
   };
 
   const printViaBluetooth = async () => {
-    if (!isConnected || !serialPort) {
+    if (!isConnected || !printerChar) {
       alert("Please connect to printer first");
       return;
     }
@@ -126,60 +153,39 @@ const App = () => {
     }
 
     setIsPrinting(true);
+    const encoder = new TextEncoder();
 
     try {
-      const writer = serialPort.writable.getWriter();
-      const encoder = new TextEncoder();
+      for (let i = 0; i < generatedCodes.length; i++) {
+        const code = generatedCodes[i];
+        setStatus(`Printing ${i + 1}/${generatedCodes.length}...`);
 
-      for (const code of generatedCodes) {
         const tsplCommand = generateTSPLCommand(code);
         const data = encoder.encode(tsplCommand);
-        await writer.write(data);
+
+        // Split data into chunks if needed (some printers have MTU limits)
+        const chunkSize = 512;
+        for (let offset = 0; offset < data.length; offset += chunkSize) {
+          const chunk = data.slice(offset, offset + chunkSize);
+          if (printerChar.properties.writeWithoutResponse) {
+            await printerChar.writeValueWithoutResponse(chunk);
+          } else {
+            await printerChar.writeValue(chunk);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      writer.releaseLock();
+      setStatus(`✅ Successfully printed ${generatedCodes.length} labels!`);
       alert(`Successfully printed ${generatedCodes.length} labels!`);
     } catch (error) {
       console.error("Print error:", error);
+      setStatus(`❌ Print error: ${error.message}`);
       alert("Failed to print: " + error.message);
     } finally {
       setIsPrinting(false);
-    }
-  };
-
-  const printViaUSB = async () => {
-    if (generatedCodes.length === 0) {
-      alert("Please generate codes first");
-      return;
-    }
-
-    try {
-      if (!navigator.serial) {
-        alert("Web Serial API is not supported. Use Chrome/Edge on desktop.");
-        return;
-      }
-
-      const port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 9600 });
-
-      const writer = port.writable.getWriter();
-      const encoder = new TextEncoder();
-
-      for (const code of generatedCodes) {
-        const tsplCommand = generateTSPLCommand(code);
-        const data = encoder.encode(tsplCommand);
-        await writer.write(data);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      writer.releaseLock();
-      await port.close();
-
-      alert(`Successfully printed ${generatedCodes.length} labels via USB!`);
-    } catch (error) {
-      console.error("USB Print error:", error);
-      alert("Failed to print via USB: " + error.message);
     }
   };
 
@@ -189,74 +195,6 @@ const App = () => {
       return;
     }
     window.print();
-  };
-
-  const downloadTSPLFile = () => {
-    if (generatedCodes.length === 0) {
-      alert("Please generate codes first");
-      return;
-    }
-
-    try {
-      // Generate all TSPL commands
-      let tsplContent = "";
-      generatedCodes.forEach((code) => {
-        tsplContent += generateTSPLCommand(code);
-        tsplContent += "\n";
-      });
-
-      // Create PDF
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
-      // Set font
-      pdf.setFontSize(8);
-      pdf.setFont("courier");
-
-      // PDF dimensions
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10;
-      const maxWidth = pageWidth - 2 * margin;
-      const lineHeight = 4;
-      let yPosition = margin;
-
-      // Add TSPL commands only
-      const lines = tsplContent.split("\n");
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Check if we need a new page
-        if (yPosition > pageHeight - margin) {
-          pdf.addPage();
-          yPosition = margin;
-        }
-
-        // Split long lines
-        const splitLines = pdf.splitTextToSize(line, maxWidth);
-
-        for (let j = 0; j < splitLines.length; j++) {
-          if (yPosition > pageHeight - margin) {
-            pdf.addPage();
-            yPosition = margin;
-          }
-
-          pdf.text(splitLines[j], margin, yPosition);
-          yPosition += lineHeight;
-        }
-      }
-
-      // Save PDF
-      pdf.save(`tspl_commands_${baseName}_${quantity}.pdf`);
-      alert(`TSPL commands saved as PDF!`);
-    } catch (error) {
-      console.error("TSPL PDF generation error:", error);
-      alert("Failed to generate TSPL PDF: " + error.message);
-    }
   };
 
   return (
@@ -337,7 +275,7 @@ const App = () => {
         <div className="max-w-[1550px] mx-auto w-full">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Alpha 40L - Barcode Printer
+              TSC Alpha 40L - Android Bluetooth
             </h1>
 
             <div className="no-print flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
@@ -366,16 +304,22 @@ const App = () => {
             </div>
           </div>
 
-          <div className="no-print bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-3 mb-4 text-xs sm:text-sm">
+          {status && (
+            <div className="no-print bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4 text-sm">
+              <strong>Status:</strong> {status}
+            </div>
+          )}
+
+          <div className="no-print bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-3 mb-4 text-xs sm:text-sm">
             <div className="flex items-start gap-2">
-              <span className="text-lg">🖨️</span>
+              <span className="text-lg">📱</span>
               <div>
-                <strong className="text-blue-900">
-                  Multiple Print Options Available
+                <strong className="text-green-900">
+                  Android Chrome Compatible
                 </strong>
-                <p className="text-blue-800 mt-1">
-                  Use Browser Print for preview, Direct Bluetooth for TC27, USB
-                  for desktop, or download TSPL/PDF file.
+                <p className="text-green-800 mt-1">
+                  Uses Web Bluetooth API - works on Android Chrome. Connect to
+                  your TSC printer and print directly!
                 </p>
               </div>
             </div>
@@ -448,43 +392,23 @@ const App = () => {
                   </h3>
 
                   <button
-                    onClick={handleBrowserPrint}
-                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 sm:px-6 py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-colors text-sm sm:text-base shadow-lg"
-                  >
-                    <Printer size={20} className="sm:w-6 sm:h-6" />
-                    <span className="whitespace-nowrap">
-                      🖨️ Print (Browser Preview)
-                    </span>
-                  </button>
-
-                  <button
                     onClick={printViaBluetooth}
                     disabled={!isConnected || isPrinting}
-                    className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-sm sm:text-base"
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 sm:px-6 py-3 rounded-lg font-semibold hover:from-green-700 hover:to-emerald-700 transition-colors disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-sm sm:text-base shadow-lg"
                   >
-                    <Bluetooth size={18} className="sm:w-5 sm:h-5" />
+                    <Bluetooth size={20} className="sm:w-6 sm:h-6" />
                     <span className="whitespace-nowrap">
-                      {isPrinting ? "Printing..." : "Direct Bluetooth (TC27)"}
+                      {isPrinting ? "Printing..." : "🖨️ Print via Bluetooth"}
                     </span>
                   </button>
 
                   <button
-                    onClick={printViaUSB}
-                    className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors text-sm sm:text-base"
+                    onClick={handleBrowserPrint}
+                    className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors text-sm sm:text-base"
                   >
                     <Printer size={18} className="sm:w-5 sm:h-5" />
                     <span className="whitespace-nowrap">
-                      USB Print (Desktop)
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={downloadTSPLFile}
-                    className="w-full flex items-center justify-center gap-2 bg-gray-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-gray-700 transition-colors text-sm sm:text-base"
-                  >
-                    <Download size={18} className="sm:w-5 sm:h-5" />
-                    <span className="whitespace-nowrap">
-                      Download TSPL Commands (PDF)
+                      Browser Print (Preview)
                     </span>
                   </button>
                 </div>
