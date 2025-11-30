@@ -46,14 +46,13 @@ const App = () => {
 
       setStatus("Requesting Bluetooth device...");
 
-      // Request device - accept all to see available printers
       const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
-          "000018f0-0000-1000-8000-00805f9b34fb", // Generic printer
-          "49535343-fe7d-4ae5-8fa9-9fafd205e455", // SPP-like service
-          "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Nordic UART
-          "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Another Nordic UART
+          "000018f0-0000-1000-8000-00805f9b34fb",
+          "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+          "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+          "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
         ],
       });
 
@@ -65,7 +64,6 @@ const App = () => {
 
       let foundChar = null;
 
-      // Try to find a writable characteristic
       for (const service of services) {
         try {
           const characteristics = await service.getCharacteristics();
@@ -114,31 +112,120 @@ const App = () => {
   const generateTSPLCommand = (code) => {
     let tspl = "";
 
+    // Common header for all label types
     tspl += `SIZE 50 mm, 50 mm\r\n`;
     tspl += `GAP 2 mm, 0 mm\r\n`;
-    tspl += `DIRECTION 0\r\n`;
-    tspl += `REFERENCE 0,0\r\n`;
-    tspl += `OFFSET 0 mm\r\n`;
-    tspl += `SET PEEL OFF\r\n`;
-    tspl += `SET CUTTER OFF\r\n`;
-    tspl += `SET PARTIAL_CUTTER OFF\r\n`;
-    tspl += `SET TEAR ON\r\n`;
-    tspl += `CLS\r\n`;
-    tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      tspl += `BARCODE 92,120,"128",70,1,0,2,2,"${code}"\r\n`;
-      tspl += `TEXT 132,200,"3",0,1,1,"${code}"\r\n`;
+      // Barcode: Centered horizontally and vertically
+      tspl += `DIRECTION 0\r\n`;
+      tspl += `REFERENCE 0,0\r\n`;
+      tspl += `OFFSET 0 mm\r\n`;
+      tspl += `SET PEEL OFF\r\n`;
+      tspl += `SET CUTTER OFF\r\n`;
+      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+      tspl += `SET TEAR ON\r\n`;
+      tspl += `CLS\r\n`;
+      tspl += `BOX 8,8,376,376,2\r\n`;
+      // BARCODE X,Y,"128",height,readable,rotation,narrow,wide,"data"
+      // Centered - X adjusted to ~120 for center position
+      tspl += `BARCODE 120,100,"128",100,0,0,2,3,"${code}"\r\n`;
+      // Text centered below barcode
+      tspl += `TEXT 150,220,"4",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      tspl += `QRCODE 130,90,H,5,A,0,"${code}"\r\n`;
-      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
+      // QR Code: Text moved down below QR code
+      tspl += `DIRECTION 0\r\n`;
+      tspl += `REFERENCE 0,0\r\n`;
+      tspl += `OFFSET 0 mm\r\n`;
+      tspl += `SET PEEL OFF\r\n`;
+      tspl += `SET CUTTER OFF\r\n`;
+      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+      tspl += `SET TEAR ON\r\n`;
+      tspl += `CLS\r\n`;
+      tspl += `BOX 8,8,376,376,2\r\n`;
+      // QRCODE X,Y,ECC_LEVEL,cell_width,mode,rotation,"data"
+      tspl += `QRCODE 100,60,H,8,A,0,"${code}"\r\n`;
+      // Text moved down - Y from 310 to 315 (additional 5px down)
+      tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DMATRIX 120,90,140,140,"${code}"\r\n`;
-      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
+      // Data Matrix: Centered in label
+      tspl += `DIRECTION 1\r\n`;
+      tspl += `REFERENCE 0,0\r\n`;
+      tspl += `CLS\r\n`;
+      tspl += `BOX 20,20,386,386,2\r\n`;
+      // Centered Data Matrix
+      tspl += `DMATRIX 203,203,30,30,X,8,"${code}"\r\n`;
+      // Text below the Data Matrix
+      tspl += `TEXT 160,320,"0",30,30,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
     return tspl;
+  };
+
+  const generateZPLCommand = (code) => {
+    let zpl = "";
+
+    // ZPL label start (50mm x 50mm at 203 DPI = ~394 dots x 394 dots)
+    zpl += `^XA\n`;
+    zpl += `^PW394\n`; // Print width
+    zpl += `^LL394\n`; // Label length
+
+    if (codeType === "barcode") {
+      // Border box for barcode
+      zpl += `^FO8,8^GB368,368,2^FS\n`;
+      // Barcode Code128 - centered horizontally
+      // Barcode width ~160 dots, center: (394-160)/2 = 117
+      zpl += `^FO117,100^BY2,3^BCN,100,N,N,N\n`;
+      zpl += `^FD${code}^FS\n`;
+      // Text centered below barcode
+      zpl += `^FO150,220^A0N,30,30^FD${code}^FS\n`;
+    } else if (codeType === "qrcode") {
+      // Border box for QR code
+      zpl += `^FO8,8^GB368,368,2^FS\n`;
+      // QR Code positioned upper center
+      zpl += `^FO100,60^BQN,2,8^FDQA,${code}^FS\n`;
+      // Text moved down below QR code
+      zpl += `^FO140,315^A0N,30,30^FD${code}^FS\n`;
+    } else if (codeType === "datamatrix") {
+      // Border box for Data Matrix
+      zpl += `^FO20,20^GB366,366,2^FS\n`;
+      // Data Matrix centered
+      zpl += `^FO137,100^BXN,8,200^FD${code}^FS\n`;
+      // Text below and centered under Data Matrix
+      zpl += `^FO147,280^A0N,30,30^FD${code}^FS\n`;
+    }
+
+    zpl += `^XZ\n`;
+    return zpl;
+  };
+
+  const downloadZPL = () => {
+    if (generatedCodes.length === 0) {
+      alert("Please generate codes first");
+      return;
+    }
+
+    let allZPL = "";
+
+    // Generate ZPL for all codes
+    generatedCodes.forEach((code) => {
+      allZPL += generateZPLCommand(code);
+      allZPL += "\n";
+    });
+
+    // Create blob and download
+    const blob = new Blob([allZPL], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `labels_${baseName}_${generatedCodes.length}x.zpl`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setStatus(`✅ Downloaded ${generatedCodes.length} labels as ZPL file`);
   };
 
   const printViaBluetooth = async () => {
@@ -163,7 +250,6 @@ const App = () => {
         const tsplCommand = generateTSPLCommand(code);
         const data = encoder.encode(tsplCommand);
 
-        // Split data into chunks if needed (some printers have MTU limits)
         const chunkSize = 512;
         for (let offset = 0; offset < data.length; offset += chunkSize) {
           const chunk = data.slice(offset, offset + chunkSize);
@@ -403,6 +489,14 @@ const App = () => {
                   </button>
 
                   <button
+                    onClick={downloadZPL}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:from-purple-700 hover:to-indigo-700 transition-colors text-sm sm:text-base"
+                  >
+                    <Download size={18} className="sm:w-5 sm:h-5" />
+                    <span className="whitespace-nowrap">Download ZPL File</span>
+                  </button>
+
+                  <button
                     onClick={handleBrowserPrint}
                     className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors text-sm sm:text-base"
                   >
@@ -450,16 +544,15 @@ const CodeItem = ({ code, type }) => {
         if (type === "barcode" && barcodeRef.current) {
           JsBarcode(barcodeRef.current, code, {
             format: "CODE128",
-            width: 1.8,
-            height: 60,
-            displayValue: true,
-            fontSize: 12,
+            width: 2,
+            height: 70,
+            displayValue: false, // Don't show text (we'll add it separately)
+            fontSize: 14,
             margin: 8,
-            textMargin: 2,
           });
         } else if (type === "qrcode" && canvasRef.current) {
           await QRCode.toCanvas(canvasRef.current, code, {
-            width: 120,
+            width: 140,
             margin: 2,
             color: {
               dark: "#000000",
@@ -470,8 +563,8 @@ const CodeItem = ({ code, type }) => {
           bwipjs.toCanvas(canvasRef.current, {
             bcid: "datamatrix",
             text: code,
-            scale: 3,
-            height: 10,
+            scale: 5.5,
+            height: 15,
             includetext: false,
             textxalign: "center",
           });
@@ -487,13 +580,16 @@ const CodeItem = ({ code, type }) => {
   return (
     <div className="print-item label-preview bg-white rounded-xl shadow-md p-2 flex flex-col items-center justify-center hover:shadow-xl transition-shadow">
       {type === "barcode" ? (
-        <div className="flex flex-col items-center justify-center w-full h-full">
-          <svg ref={barcodeRef} className="max-w-[90%] max-h-[90%]"></svg>
+        <div className="flex flex-col items-center justify-center w-full h-full gap-2">
+          <svg ref={barcodeRef} className="max-w-[90%]"></svg>
+          <p className="text-xs sm:text-sm font-semibold text-gray-800 text-center">
+            {code}
+          </p>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center h-full gap-1">
-          <canvas ref={canvasRef} className="max-w-[75%]"></canvas>
-          <p className="text-[11px] sm:text-xs font-semibold text-gray-800 text-center">
+        <div className="flex flex-col items-center justify-center h-full gap-2">
+          <canvas ref={canvasRef} className="max-w-[80%]"></canvas>
+          <p className="text-xs sm:text-sm font-semibold text-gray-800 text-center">
             {code}
           </p>
         </div>
