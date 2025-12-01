@@ -659,7 +659,7 @@ const CodeItem = ({ code, type }) => {
             {code}
           </p>
         </div>
-      )} 
+      )}
     </div>
   );
 };
