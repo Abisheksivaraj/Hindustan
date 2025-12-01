@@ -55,19 +55,16 @@ const App = () => {
       setStatus("📱 Opening Bluetooth device selector...");
       setShowTroubleshooting(false);
 
-      // Request device with filters for TSC printers
+      // Request device - show ALL Bluetooth devices
       const device = await navigator.bluetooth.requestDevice({
-        filters: [
-          { namePrefix: "TSC" },
-          { namePrefix: "Alpha" },
-          { services: ["000018f0-0000-1000-8000-00805f9b34fb"] },
-        ],
+        acceptAllDevices: true,
         optionalServices: [
           "000018f0-0000-1000-8000-00805f9b34fb", // Common printer service
           "49535343-fe7d-4ae5-8fa9-9fafd205e455", // HM-10/BLE service
           "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Nordic UART
           "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Generic UART
-          "0000ffe0-0000-1000-8000-00805f9b34fb", // Another common service
+          "0000ffe0-0000-1000-8000-00805f9b34fb", // Common BLE service
+          "00001101-0000-1000-8000-00805f9b34fb", // Serial Port Profile
         ],
       });
 
@@ -459,25 +456,31 @@ const App = () => {
                       <strong>Enable Bluetooth pairing mode</strong> on the
                       printer:
                       <ul className="list-disc list-inside ml-6 mt-1">
-                        <li>Check printer manual for pairing button/menu</li>
-                        <li>LED should blink indicating pairing mode</li>
+                        <li>Press and hold the FEED button for 3-5 seconds</li>
+                        <li>LED should blink blue indicating pairing mode</li>
+                        <li>
+                          Printer should appear as "TSC_XXXXX" or "BT_XXXXX"
+                        </li>
                       </ul>
                     </li>
                     <li>
-                      <strong>DO NOT pre-pair</strong> in Android Bluetooth
-                      settings - let the web app discover the device
+                      <strong>Important:</strong> The printer must be in BLE
+                      (Bluetooth Low Energy) mode, not classic Bluetooth
                     </li>
                     <li>
                       Click "Connect Bluetooth" and{" "}
-                      <strong>select your TSC printer</strong> from the list
+                      <strong>
+                        look for device starting with "TSC" or "BT"
+                      </strong>{" "}
+                      from the list
                     </li>
                     <li>
-                      If the printer doesn't appear, move closer (within 1-2
-                      meters)
-                    </li>
-                    <li>
-                      Try restarting both the printer and the Zebra device if
-                      issues persist
+                      If the printer doesn't appear:
+                      <ul className="list-disc list-inside ml-6 mt-1">
+                        <li>Move closer (within 1 meter)</li>
+                        <li>Restart the printer</li>
+                        <li>Check if printer firmware supports BLE</li>
+                      </ul>
                     </li>
                   </ol>
                   <button
@@ -499,8 +502,9 @@ const App = () => {
                   Zebra HHT (Android) → TSC Alpha 40L
                 </strong>
                 <p className="text-blue-800 mt-1">
-                  Uses Web Bluetooth API. Make sure the printer is powered on
-                  and in Bluetooth pairing mode before connecting.
+                  Using acceptAllDevices mode - you'll see ALL nearby Bluetooth
+                  devices. Look for devices with "TSC", "Alpha", or "BT" in the
+                  name.
                 </p>
               </div>
             </div>
