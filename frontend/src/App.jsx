@@ -137,8 +137,8 @@ const App = () => {
       tspl += `SET PARTIAL_CUTTER OFF\r\n`;
       tspl += `SET TEAR ON\r\n`;
       tspl += `CLS\r\n`;
-      tspl += `BOX 20,20,380,380,2\r\n`;
-      tspl += `DMATRIX 70,60,8,8,x,8,"${code}"\r\n`;
+      tspl += `BOX 8,8,376,376,2\r\n`;
+      tspl += `DMATRIX 100,60,200,200,x,8,"${code}"\r\n`;
       tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
     }
 
