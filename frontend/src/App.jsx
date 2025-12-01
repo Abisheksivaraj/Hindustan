@@ -5,8 +5,6 @@ import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 import jsPDF from "jspdf";
 
-const BLUETOOTH_SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
-
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
   const [quantity, setQuantity] = useState(10);
@@ -26,7 +24,7 @@ const App = () => {
     }
 
     const prefix = match[1];
-    const startNum = parseInt(match[2], 10);
+    const startNum = parseInt(match[2]);
     const numLength = match[2].length;
 
     for (let i = 0; i < quantity; i++) {
@@ -47,17 +45,11 @@ const App = () => {
         return;
       }
 
-      let port;
-
-      // Preferred: request Bluetooth SPP serial ports
-      try {
-        port = await navigator.serial.requestPort({
-          filters: [{ bluetoothServiceClassId: BLUETOOTH_SPP_UUID }],
-        });
-      } catch (e) {
-        // Fallback: allow user to choose any serial port
-        port = await navigator.serial.requestPort();
-      }
+      const port = await navigator.serial.requestPort({
+        filters: [
+          { bluetoothServiceClassId: "00001101-0000-1000-8000-00805f9b34fb" },
+        ],
+      });
 
       await port.open({
         baudRate: 9600,
@@ -94,38 +86,28 @@ const App = () => {
 
     tspl += `SIZE 50 mm, 50 mm\r\n`;
     tspl += `GAP 2 mm, 0 mm\r\n`;
+    tspl += `DIRECTION 0\r\n`;
+    tspl += `REFERENCE 0,0\r\n`;
+    tspl += `OFFSET 0 mm\r\n`;
+    tspl += `SET PEEL OFF\r\n`;
+    tspl += `SET CUTTER OFF\r\n`;
+    tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+    tspl += `SET TEAR ON\r\n`;
+    tspl += `CLS\r\n`;
+    tspl += `BOX 8,8,376,376,2\r\n`;
 
     if (codeType === "barcode") {
-      tspl += `DIRECTION 0\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `OFFSET 0 mm\r\n`;
-      tspl += `SET PEEL OFF\r\n`;
-      tspl += `SET CUTTER OFF\r\n`;
-      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
-      tspl += `SET TEAR ON\r\n`;
-      tspl += `CLS\r\n`;
-      tspl += `BOX 8,8,376,376,2\r\n`;
-      tspl += `BARCODE 120,100,"128",100,0,0,2,3,"${code}"\r\n`;
-      tspl += `TEXT 150,220,"4",0,1,1,"${code}"\r\n`;
+      // Centered barcode - adjusted position
+      tspl += `BARCODE 92,120,"128",70,1,0,2,2,"${code}"\r\n`;
+      tspl += `TEXT 132,200,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      tspl += `DIRECTION 0\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `OFFSET 0 mm\r\n`;
-      tspl += `SET PEEL OFF\r\n`;
-      tspl += `SET CUTTER OFF\r\n`;
-      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
-      tspl += `SET TEAR ON\r\n`;
-      tspl += `CLS\r\n`;
-      tspl += `BOX 8,8,376,376,2\r\n`;
-      tspl += `QRCODE 100,60,H,8,A,0,"${code}"\r\n`;
-      tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
+      // Centered QR code
+      tspl += `QRCODE 130,90,H,5,A,0,"${code}"\r\n`;
+      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DIRECTION 1\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `CLS\r\n`;
-      tspl += `BOX 20,20,386,386,2\r\n`;
-      tspl += `DMATRIX 203,203,30,30,X,8,"${code}"\r\n`;
-      tspl += `TEXT 160,320,"0",30,30,"${code}"\r\n`;
+      // Centered Data Matrix
+      tspl += `DMATRIX 120,90,140,140,"${code}"\r\n`;
+      tspl += `TEXT 152,220,"3",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
@@ -216,21 +198,25 @@ const App = () => {
     }
 
     try {
+      // Generate all TSPL commands
       let tsplContent = "";
       generatedCodes.forEach((code) => {
         tsplContent += generateTSPLCommand(code);
         tsplContent += "\n";
       });
 
+      // Create PDF
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",
         format: "a4",
       });
 
+      // Set font
       pdf.setFontSize(8);
       pdf.setFont("courier");
 
+      // PDF dimensions
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       const margin = 10;
@@ -238,16 +224,19 @@ const App = () => {
       const lineHeight = 4;
       let yPosition = margin;
 
+      // Add TSPL commands only
       const lines = tsplContent.split("\n");
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
 
+        // Check if we need a new page
         if (yPosition > pageHeight - margin) {
           pdf.addPage();
           yPosition = margin;
         }
 
+        // Split long lines
         const splitLines = pdf.splitTextToSize(line, maxWidth);
 
         for (let j = 0; j < splitLines.length; j++) {
@@ -261,6 +250,7 @@ const App = () => {
         }
       }
 
+      // Save PDF
       pdf.save(`tspl_commands_${baseName}_${quantity}.pdf`);
       alert(`TSPL commands saved as PDF!`);
     } catch (error) {
@@ -417,9 +407,7 @@ const App = () => {
                   type="number"
                   value={quantity}
                   onChange={(e) =>
-                    setQuantity(
-                      Math.max(1, parseInt(e.target.value || "1", 10))
-                    )
+                    setQuantity(Math.max(1, parseInt(e.target.value) || 1))
                   }
                   min="1"
                   max="1000"
