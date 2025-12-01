@@ -9,7 +9,8 @@ const BLUETOOTH_SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
 
 const App = () => {
   const [baseName, setBaseName] = useState("PA00001");
-  const [quantity, setQuantity] = useState(10);
+  const [quantity, setQuantity] = useState("10");
+  const [copiesPerLabel, setCopiesPerLabel] = useState("1");
   const [codeType, setCodeType] = useState("barcode");
   const [generatedCodes, setGeneratedCodes] = useState([]);
   const [serialPort, setSerialPort] = useState(null);
@@ -29,10 +30,18 @@ const App = () => {
     const startNum = parseInt(match[2], 10);
     const numLength = match[2].length;
 
-    for (let i = 0; i < quantity; i++) {
+    const qty = parseInt(quantity || "1", 10);
+    const copies = parseInt(copiesPerLabel || "1", 10);
+
+    for (let i = 0; i < qty; i++) {
       const currentNum = startNum + i;
       const paddedNum = String(currentNum).padStart(numLength, "0");
-      codes.push(prefix + paddedNum);
+      const code = prefix + paddedNum;
+
+      // Add the code multiple times based on copiesPerLabel
+      for (let copy = 0; copy < copies; copy++) {
+        codes.push(code);
+      }
     }
 
     setGeneratedCodes(codes);
@@ -120,12 +129,17 @@ const App = () => {
       tspl += `QRCODE 100,60,H,8,A,0,"${code}"\r\n`;
       tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      tspl += `DIRECTION 1\r\n`;
+      tspl += `DIRECTION 0\r\n`;
       tspl += `REFERENCE 0,0\r\n`;
+      tspl += `OFFSET 0 mm\r\n`;
+      tspl += `SET PEEL OFF\r\n`;
+      tspl += `SET CUTTER OFF\r\n`;
+      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+      tspl += `SET TEAR ON\r\n`;
       tspl += `CLS\r\n`;
-      tspl += `BOX 20,20,386,386,2\r\n`;
-      tspl += `DMATRIX 203,203,30,30,X,8,"${code}"\r\n`;
-      tspl += `TEXT 160,320,"0",30,30,"${code}"\r\n`;
+      tspl += `BOX 20,20,380,380,2\r\n`;
+      tspl += `DMATRIX 70,60,8,8,x,8,"${code}"\r\n`;
+      tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
@@ -261,7 +275,7 @@ const App = () => {
         }
       }
 
-      pdf.save(`tspl_commands_${baseName}_${quantity}.pdf`);
+      pdf.save(`tspl_commands_${baseName}_${quantity}x${copiesPerLabel}.pdf`);
       alert(`TSPL commands saved as PDF!`);
     } catch (error) {
       console.error("TSPL PDF generation error:", error);
@@ -411,20 +425,80 @@ const App = () => {
 
               <div>
                 <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
-                  Quantity
+                  Quantity (Sequential Numbers)
                 </label>
                 <input
-                  type="number"
+                  type="text"
                   value={quantity}
-                  onChange={(e) =>
-                    setQuantity(
-                      Math.max(1, parseInt(e.target.value || "1", 10))
-                    )
-                  }
-                  min="1"
-                  max="1000"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === "") {
+                      setQuantity("");
+                    } else if (/^\d+$/.test(value)) {
+                      const num = parseInt(value, 10);
+                      if (num <= 1000) {
+                        setQuantity(value);
+                      }
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const value = e.target.value;
+                    if (value === "" || parseInt(value, 10) < 1) {
+                      setQuantity(1);
+                    }
+                  }}
+                  placeholder="10"
                   className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Number of different sequential labels (e.g., 10 = PB00001 to
+                  PB00010)
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">
+                  Copies Per Label
+                </label>
+                <input
+                  type="text"
+                  value={copiesPerLabel}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === "") {
+                      setCopiesPerLabel("");
+                    } else if (/^\d+$/.test(value)) {
+                      const num = parseInt(value, 10);
+                      if (num <= 100) {
+                        setCopiesPerLabel(value);
+                      }
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const value = e.target.value;
+                    if (value === "" || parseInt(value, 10) < 1) {
+                      setCopiesPerLabel(1);
+                    }
+                  }}
+                  placeholder="1"
+                  className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Number of copies for each label (e.g., 10 = 10 copies of
+                  PB00001, 10 copies of PB00002, etc.)
+                </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs sm:text-sm">
+                <strong className="text-amber-900">Total Labels:</strong>
+                <span className="text-amber-800 ml-2">
+                  {quantity || 0} × {copiesPerLabel || 0} ={" "}
+                  <strong>
+                    {parseInt(quantity || "0", 10) *
+                      parseInt(copiesPerLabel || "0", 10)}
+                  </strong>{" "}
+                  labels
+                </span>
               </div>
 
               <div>
@@ -558,8 +632,8 @@ const CodeItem = ({ code, type }) => {
           bwipjs.toCanvas(canvasRef.current, {
             bcid: "datamatrix",
             text: code,
-            scale: 3,
-            height: 10,
+            scale: 4,
+            height: 12,
             includetext: false,
             textxalign: "center",
           });
