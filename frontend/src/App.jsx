@@ -138,8 +138,8 @@ const App = () => {
       tspl += `SET TEAR ON\r\n`;
       tspl += `CLS\r\n`;
       tspl += `BOX 8,8,376,376,2\r\n`;
-      tspl += `DMATRIX 100,60,200,200,x,8,"${code}"\r\n`;
-      tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
+      tspl += `DMATRIX 100,80,16,16,x,6,"${code}"\r\n`;
+      tspl += `TEXT 120,260,"4",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
