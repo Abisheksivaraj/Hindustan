@@ -417,7 +417,9 @@ const App = () => {
                   type="number"
                   value={quantity}
                   onChange={(e) =>
-                    setQuantity(Math.max(1, parseInt(e.target.value || "1", 10)))
+                    setQuantity(
+                      Math.max(1, parseInt(e.target.value || "1", 10))
+                    )
                   }
                   min="1"
                   max="1000"
