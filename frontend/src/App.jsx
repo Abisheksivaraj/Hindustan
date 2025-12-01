@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Printer, Bluetooth, Download, Search } from "lucide-react";
+import {
+  Printer,
+  Bluetooth,
+  Download,
+  AlertCircle,
+  CheckCircle,
+} from "lucide-react";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
@@ -14,6 +20,7 @@ const App = () => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [status, setStatus] = useState("");
   const [printerChar, setPrinterChar] = useState(null);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
 
   const generateSequence = () => {
     const codes = [];
@@ -40,38 +47,65 @@ const App = () => {
   const connectBluetoothPrinter = async () => {
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth is not supported on this browser/device");
+        setStatus("❌ Web Bluetooth is not supported on this browser/device");
+        setShowTroubleshooting(true);
         return;
       }
 
-      setStatus("Requesting Bluetooth device...");
+      setStatus("📱 Opening Bluetooth device selector...");
+      setShowTroubleshooting(false);
 
+      // Request device with filters for TSC printers
       const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
+        filters: [
+          { namePrefix: "TSC" },
+          { namePrefix: "Alpha" },
+          { services: ["000018f0-0000-1000-8000-00805f9b34fb"] },
+        ],
         optionalServices: [
-          "000018f0-0000-1000-8000-00805f9b34fb",
-          "49535343-fe7d-4ae5-8fa9-9fafd205e455",
-          "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
-          "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+          "000018f0-0000-1000-8000-00805f9b34fb", // Common printer service
+          "49535343-fe7d-4ae5-8fa9-9fafd205e455", // HM-10/BLE service
+          "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Nordic UART
+          "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Generic UART
+          "0000ffe0-0000-1000-8000-00805f9b34fb", // Another common service
         ],
       });
 
-      setStatus("Connecting to printer...");
+      setStatus(`🔄 Connecting to ${device.name || "printer"}...`);
       const server = await device.gatt.connect();
 
-      setStatus("Discovering services...");
+      setStatus("🔍 Discovering printer services...");
       const services = await server.getPrimaryServices();
 
-      let foundChar = null;
+      console.log(
+        "Available services:",
+        services.map((s) => s.uuid)
+      );
 
+      let foundChar = null;
+      let serviceUsed = null;
+
+      // Try to find writable characteristic
       for (const service of services) {
         try {
           const characteristics = await service.getCharacteristics();
+          console.log(
+            `Service ${service.uuid} characteristics:`,
+            characteristics.map((c) => ({
+              uuid: c.uuid,
+              properties: c.properties,
+            }))
+          );
+
           for (const char of characteristics) {
             if (char.properties.write || char.properties.writeWithoutResponse) {
               foundChar = char;
+              serviceUsed = service.uuid;
               setStatus(
-                `Found writable characteristic: ${char.uuid.substring(0, 8)}...`
+                `✅ Found writable characteristic in service ${service.uuid.substring(
+                  0,
+                  8
+                )}...`
               );
               break;
             }
@@ -84,18 +118,35 @@ const App = () => {
 
       if (!foundChar) {
         throw new Error(
-          "No writable characteristic found. Printer may not be compatible."
+          "No writable characteristic found. The printer may not be in pairing mode or is incompatible."
         );
       }
 
       setPrinterChar(foundChar);
       setBluetoothDevice(device);
       setIsConnected(true);
-      setStatus(`✅ Connected to ${device.name || "Printer"}`);
+      setStatus(`✅ Connected to ${device.name || "TSC Printer"}`);
+
+      // Listen for disconnection
+      device.addEventListener("gattserverdisconnected", () => {
+        setIsConnected(false);
+        setBluetoothDevice(null);
+        setPrinterChar(null);
+        setStatus("⚠️ Printer disconnected");
+      });
     } catch (error) {
       console.error("Bluetooth error:", error);
-      setStatus(`❌ Error: ${error.message}`);
-      alert("Failed to connect: " + error.message);
+
+      if (error.message.includes("User cancelled")) {
+        setStatus("❌ Connection cancelled - No device selected");
+        setShowTroubleshooting(true);
+      } else if (error.message.includes("No writable characteristic")) {
+        setStatus(`❌ ${error.message}`);
+        setShowTroubleshooting(true);
+      } else {
+        setStatus(`❌ Connection failed: ${error.message}`);
+        setShowTroubleshooting(true);
+      }
     }
   };
 
@@ -115,48 +166,27 @@ const App = () => {
     // Common header for all label types
     tspl += `SIZE 50 mm, 50 mm\r\n`;
     tspl += `GAP 2 mm, 0 mm\r\n`;
+    tspl += `DIRECTION 0\r\n`;
+    tspl += `REFERENCE 0,0\r\n`;
+    tspl += `OFFSET 0 mm\r\n`;
+    tspl += `SET PEEL OFF\r\n`;
+    tspl += `SET CUTTER OFF\r\n`;
+    tspl += `SET PARTIAL_CUTTER OFF\r\n`;
+    tspl += `SET TEAR ON\r\n`;
+    tspl += `CLS\r\n`;
 
     if (codeType === "barcode") {
-      // Barcode: Centered horizontally and vertically
-      tspl += `DIRECTION 0\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `OFFSET 0 mm\r\n`;
-      tspl += `SET PEEL OFF\r\n`;
-      tspl += `SET CUTTER OFF\r\n`;
-      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
-      tspl += `SET TEAR ON\r\n`;
-      tspl += `CLS\r\n`;
       tspl += `BOX 8,8,376,376,2\r\n`;
-      // BARCODE X,Y,"128",height,readable,rotation,narrow,wide,"data"
-      // Centered - X adjusted to ~120 for center position
       tspl += `BARCODE 120,100,"128",100,0,0,2,3,"${code}"\r\n`;
-      // Text centered below barcode
       tspl += `TEXT 150,220,"4",0,1,1,"${code}"\r\n`;
     } else if (codeType === "qrcode") {
-      // QR Code: Text moved down below QR code
-      tspl += `DIRECTION 0\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `OFFSET 0 mm\r\n`;
-      tspl += `SET PEEL OFF\r\n`;
-      tspl += `SET CUTTER OFF\r\n`;
-      tspl += `SET PARTIAL_CUTTER OFF\r\n`;
-      tspl += `SET TEAR ON\r\n`;
-      tspl += `CLS\r\n`;
       tspl += `BOX 8,8,376,376,2\r\n`;
-      // QRCODE X,Y,ECC_LEVEL,cell_width,mode,rotation,"data"
       tspl += `QRCODE 100,60,H,8,A,0,"${code}"\r\n`;
-      // Text moved down - Y from 310 to 315 (additional 5px down)
       tspl += `TEXT 140,315,"4",0,1,1,"${code}"\r\n`;
     } else if (codeType === "datamatrix") {
-      // Data Matrix: Centered in label
-      tspl += `DIRECTION 1\r\n`;
-      tspl += `REFERENCE 0,0\r\n`;
-      tspl += `CLS\r\n`;
       tspl += `BOX 20,20,386,386,2\r\n`;
-      // Centered Data Matrix
       tspl += `DMATRIX 203,203,30,30,X,8,"${code}"\r\n`;
-      // Text below the Data Matrix
-      tspl += `TEXT 160,320,"0",30,30,"${code}"\r\n`;
+      tspl += `TEXT 160,320,"0",0,1,1,"${code}"\r\n`;
     }
 
     tspl += `PRINT 1,1\r\n`;
@@ -165,39 +195,52 @@ const App = () => {
 
   const generateZPLCommand = (code) => {
     let zpl = "";
-
-    // ZPL label start (50mm x 50mm at 203 DPI = ~394 dots x 394 dots)
     zpl += `^XA\n`;
-    zpl += `^PW394\n`; // Print width
-    zpl += `^LL394\n`; // Label length
+    zpl += `^PW394\n`;
+    zpl += `^LL394\n`;
 
     if (codeType === "barcode") {
-      // Border box for barcode
       zpl += `^FO8,8^GB368,368,2^FS\n`;
-      // Barcode Code128 - centered horizontally
-      // Barcode width ~160 dots, center: (394-160)/2 = 117
       zpl += `^FO117,100^BY2,3^BCN,100,N,N,N\n`;
       zpl += `^FD${code}^FS\n`;
-      // Text centered below barcode
       zpl += `^FO150,220^A0N,30,30^FD${code}^FS\n`;
     } else if (codeType === "qrcode") {
-      // Border box for QR code
       zpl += `^FO8,8^GB368,368,2^FS\n`;
-      // QR Code positioned upper center
       zpl += `^FO100,60^BQN,2,8^FDQA,${code}^FS\n`;
-      // Text moved down below QR code
       zpl += `^FO140,315^A0N,30,30^FD${code}^FS\n`;
     } else if (codeType === "datamatrix") {
-      // Border box for Data Matrix
       zpl += `^FO20,20^GB366,366,2^FS\n`;
-      // Data Matrix centered
       zpl += `^FO137,100^BXN,8,200^FD${code}^FS\n`;
-      // Text below and centered under Data Matrix
       zpl += `^FO147,280^A0N,30,30^FD${code}^FS\n`;
     }
 
     zpl += `^XZ\n`;
     return zpl;
+  };
+
+  const downloadTSPL = () => {
+    if (generatedCodes.length === 0) {
+      alert("Please generate codes first");
+      return;
+    }
+
+    let allTSPL = "";
+    generatedCodes.forEach((code) => {
+      allTSPL += generateTSPLCommand(code);
+      allTSPL += "\n";
+    });
+
+    const blob = new Blob([allTSPL], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `labels_TSC_${baseName}_${generatedCodes.length}x.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setStatus(`✅ Downloaded ${generatedCodes.length} labels as TSPL file`);
   };
 
   const downloadZPL = () => {
@@ -207,19 +250,16 @@ const App = () => {
     }
 
     let allZPL = "";
-
-    // Generate ZPL for all codes
     generatedCodes.forEach((code) => {
       allZPL += generateZPLCommand(code);
       allZPL += "\n";
     });
 
-    // Create blob and download
     const blob = new Blob([allZPL], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `labels_${baseName}_${generatedCodes.length}x.zpl`;
+    link.download = `labels_ZPL_${baseName}_${generatedCodes.length}x.zpl`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -245,31 +285,40 @@ const App = () => {
     try {
       for (let i = 0; i < generatedCodes.length; i++) {
         const code = generatedCodes[i];
-        setStatus(`Printing ${i + 1}/${generatedCodes.length}...`);
+        setStatus(`🖨️ Printing ${i + 1}/${generatedCodes.length}...`);
 
         const tsplCommand = generateTSPLCommand(code);
         const data = encoder.encode(tsplCommand);
 
+        // Send in chunks to avoid buffer overflow
         const chunkSize = 512;
         for (let offset = 0; offset < data.length; offset += chunkSize) {
           const chunk = data.slice(offset, offset + chunkSize);
-          if (printerChar.properties.writeWithoutResponse) {
-            await printerChar.writeValueWithoutResponse(chunk);
-          } else {
-            await printerChar.writeValue(chunk);
+
+          try {
+            if (printerChar.properties.writeWithoutResponse) {
+              await printerChar.writeValueWithoutResponse(chunk);
+            } else {
+              await printerChar.writeValue(chunk);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          } catch (writeError) {
+            console.error("Write error:", writeError);
+            throw new Error(`Failed to send data: ${writeError.message}`);
           }
-          await new Promise((resolve) => setTimeout(resolve, 50));
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Wait between labels
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       setStatus(`✅ Successfully printed ${generatedCodes.length} labels!`);
-      alert(`Successfully printed ${generatedCodes.length} labels!`);
+      alert(`✅ Successfully printed ${generatedCodes.length} labels!`);
     } catch (error) {
       console.error("Print error:", error);
       setStatus(`❌ Print error: ${error.message}`);
       alert("Failed to print: " + error.message);
+      setShowTroubleshooting(true);
     } finally {
       setIsPrinting(false);
     }
@@ -338,36 +387,19 @@ const App = () => {
           max-width: 189px;
           border: 2px solid #000000 !important;
         }
-
-        body::-webkit-scrollbar {
-          width: 8px;
-        }
-        
-        body::-webkit-scrollbar-track {
-          background: #f1f1f1;
-        }
-        
-        body::-webkit-scrollbar-thumb {
-          background: #888;
-          border-radius: 4px;
-        }
-        
-        body::-webkit-scrollbar-thumb:hover {
-          background: #555;
-        }
       `}</style>
 
       <div className="min-h-screen bg-gray-50 p-2 sm:p-4 md:p-6 lg:p-8">
         <div className="max-w-[1550px] mx-auto w-full">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 leading-tight">
-              TSC Alpha 40L - Android Bluetooth
+              TSC Alpha 40L - Zebra HHT Bluetooth
             </h1>
 
             <div className="no-print flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
               {isConnected ? (
                 <div className="flex items-center gap-2 w-full sm:w-auto bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                  <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <CheckCircle size={16} className="text-green-600" />
                   <span className="text-xs sm:text-sm text-green-700 font-medium">
                     Connected
                   </span>
@@ -391,21 +423,84 @@ const App = () => {
           </div>
 
           {status && (
-            <div className="no-print bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4 text-sm">
+            <div
+              className={`no-print border rounded-lg p-3 mb-4 text-sm ${
+                status.includes("❌") || status.includes("⚠️")
+                  ? "bg-red-50 border-red-300 text-red-800"
+                  : status.includes("✅")
+                  ? "bg-green-50 border-green-300 text-green-800"
+                  : "bg-blue-50 border-blue-300 text-blue-800"
+              }`}
+            >
               <strong>Status:</strong> {status}
             </div>
           )}
 
-          <div className="no-print bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-3 mb-4 text-xs sm:text-sm">
+          {showTroubleshooting && (
+            <div className="no-print bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 mb-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle
+                  className="text-yellow-600 flex-shrink-0 mt-1"
+                  size={24}
+                />
+                <div className="flex-1">
+                  <h3 className="font-bold text-yellow-900 mb-2">
+                    Troubleshooting Steps:
+                  </h3>
+                  <ol className="list-decimal list-inside space-y-2 text-sm text-yellow-800">
+                    <li>
+                      <strong>Turn ON Bluetooth</strong> on your Zebra handheld
+                      device in Android settings
+                    </li>
+                    <li>
+                      <strong>Power ON</strong> the TSC Alpha 40L printer
+                    </li>
+                    <li>
+                      <strong>Enable Bluetooth pairing mode</strong> on the
+                      printer:
+                      <ul className="list-disc list-inside ml-6 mt-1">
+                        <li>Check printer manual for pairing button/menu</li>
+                        <li>LED should blink indicating pairing mode</li>
+                      </ul>
+                    </li>
+                    <li>
+                      <strong>DO NOT pre-pair</strong> in Android Bluetooth
+                      settings - let the web app discover the device
+                    </li>
+                    <li>
+                      Click "Connect Bluetooth" and{" "}
+                      <strong>select your TSC printer</strong> from the list
+                    </li>
+                    <li>
+                      If the printer doesn't appear, move closer (within 1-2
+                      meters)
+                    </li>
+                    <li>
+                      Try restarting both the printer and the Zebra device if
+                      issues persist
+                    </li>
+                  </ol>
+                  <button
+                    onClick={() => setShowTroubleshooting(false)}
+                    className="mt-3 px-3 py-1 bg-yellow-600 text-white rounded text-xs hover:bg-yellow-700"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="no-print bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-3 mb-4 text-xs sm:text-sm">
             <div className="flex items-start gap-2">
               <span className="text-lg">📱</span>
               <div>
-                <strong className="text-green-900">
-                  Android Chrome Compatible
+                <strong className="text-blue-900">
+                  Zebra HHT (Android) → TSC Alpha 40L
                 </strong>
-                <p className="text-green-800 mt-1">
-                  Uses Web Bluetooth API - works on Android Chrome. Connect to
-                  your TSC printer and print directly!
+                <p className="text-blue-800 mt-1">
+                  Uses Web Bluetooth API. Make sure the printer is powered on
+                  and in Bluetooth pairing mode before connecting.
                 </p>
               </div>
             </div>
@@ -489,11 +584,23 @@ const App = () => {
                   </button>
 
                   <button
-                    onClick={downloadZPL}
+                    onClick={downloadTSPL}
                     className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:from-purple-700 hover:to-indigo-700 transition-colors text-sm sm:text-base"
                   >
                     <Download size={18} className="sm:w-5 sm:h-5" />
-                    <span className="whitespace-nowrap">Download ZPL File</span>
+                    <span className="whitespace-nowrap">
+                      Download TSPL File (TSC)
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={downloadZPL}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-medium hover:from-indigo-700 hover:to-purple-700 transition-colors text-sm sm:text-base"
+                  >
+                    <Download size={18} className="sm:w-5 sm:h-5" />
+                    <span className="whitespace-nowrap">
+                      Download ZPL File (Zebra)
+                    </span>
                   </button>
 
                   <button
@@ -546,7 +653,7 @@ const CodeItem = ({ code, type }) => {
             format: "CODE128",
             width: 2,
             height: 70,
-            displayValue: false, // Don't show text (we'll add it separately)
+            displayValue: false,
             fontSize: 14,
             margin: 8,
           });
